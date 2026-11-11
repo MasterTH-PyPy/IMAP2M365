@@ -26,8 +26,7 @@ public static class ConfigStore
         var plaintext = JsonSerializer.SerializeToUtf8Bytes(config, JsonOpts);
 
         var salt = RandomNumberGenerator.GetBytes(SaltLen);
-        using var kdf = new Rfc2898DeriveBytes(masterPassword, salt, Iterations, HashAlgorithmName.SHA256);
-        var key = kdf.GetBytes(KeyLen);
+        var key = Rfc2898DeriveBytes.Pbkdf2(masterPassword, salt, Iterations, HashAlgorithmName.SHA256, KeyLen);
 
         using var aes = Aes.Create();
         aes.KeySize = 256;
@@ -55,8 +54,7 @@ public static class ConfigStore
         var iv = raw.AsSpan(SaltLen, IvLen).ToArray();
         var cipher = raw.AsSpan(SaltLen + IvLen).ToArray();
 
-        using var kdf = new Rfc2898DeriveBytes(masterPassword, salt, Iterations, HashAlgorithmName.SHA256);
-        var key = kdf.GetBytes(KeyLen);
+        var key = Rfc2898DeriveBytes.Pbkdf2(masterPassword, salt, Iterations, HashAlgorithmName.SHA256, KeyLen);
 
         using var aes = Aes.Create();
         aes.KeySize = 256;

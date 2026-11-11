@@ -97,7 +97,7 @@ public sealed class ImapAppendTarget : IMailTarget
             }
             catch (MailKit.Net.Imap.ImapCommandException)
             {
-                await folder.AppendAsync(message.Mime, ct).ConfigureAwait(false);
+                await folder.AppendAsync(message.Mime, MessageFlags.None, ct).ConfigureAwait(false);
             }
         }
     }
