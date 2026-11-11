@@ -87,14 +87,14 @@ public sealed class MigrationTab : UserControl
 
         var testMode = _testMode.Checked;
 
-        // Lizenzprüfung nur für die echte Vollmigration; Testmodus ist frei.
+        // Ohne gültige Lizenz läuft gar nichts – auch der Testmodus nicht (er verbraucht nur nichts).
+        if (!_license.HasValidLicense)
+        {
+            _log("Keine gültige Lizenz - bitte im Reiter Lizenz aktivieren.");
+            return;
+        }
         if (!testMode)
         {
-            if (!_license.HasValidLicense)
-            {
-                _log("Keine gültige Lizenz - bitte im Reiter Lizenz aktivieren. (Testmodus bleibt nutzbar.)");
-                return;
-            }
             var needed = _config.Mailboxes.Count(m => m.Enabled && !_license.IsConsumed(m.TargetSmtp));
             _log($"Lizenz: {_license.Remaining} frei, {needed} neue aktive Postfächer in dieser Migration.");
         }
