@@ -1,0 +1,13 @@
+# Build
+bin/
+obj/
+*.user
+
+# Secrets / Konfiguration
+config.enc
+mailboxes.csv
+*.secret
+
+# IDE
+.vs/
+.idea/
