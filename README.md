@@ -45,13 +45,35 @@ Siehe `prep/Register-ExchangeServicePrincipal.ps1`:
 `config.enc` → TenantId, ClientId, ClientSecret, Quell-IMAP-Defaults,
 Postfach-Mapping-CSV-Pfad, Ordner-Ausschlüsse, Dry-Run-Flag.
 
+## Einrichtungs-Wizard (GUI-Reiter „Einrichtung")
+
+Die komplette M365-Vorarbeit steckt im Tool – kein manuelles PowerShell mehr nötig:
+
+1. **Entra-App anlegen** (Graph, `GraphProvisioner`): App-Registrierung, Permission
+   `IMAP.AccessAsApp` (+ `Mail.ReadWrite` fürs Graph-Target), Client-Secret,
+   Admin-Consent via `appRoleAssignment`. Admin meldet sich einmal per Device-Code an.
+2. **Mit EXO verbinden** (PowerShell SDK in-process, `ExoRunner`).
+3. **Postfächer laden**: `Get-EXOMailbox` liest **User- und freigegebene Postfächer**
+   inkl. IMAP-Status (`Get-EXOCASMailbox`) direkt ins Grid.
+4. **Einrichtung ausführen**: `New-ServicePrincipal`, pro Postfach `Set-CASMailbox
+   -ImapEnabled` (wichtig bei Shared Mailboxes), `Add-MailboxPermission` (FullAccess),
+   optional `New-ApplicationAccessPolicy`, Abschluss-Test. Alles mit **Dry-Run**.
+
+**Shared Mailboxes**: app-only XOAUTH2 ist dafür der richtige Weg – kein interaktiver
+Login ins (gesperrte) Postfach nötig, Zugriff rein über die Postfachberechtigung.
+
+**Grid**: Ziel-Postfach + Typ (User/Shared) + IMAP-Status werden ausgelesen; Quell-User
+(vorbelegt mit Ziel-SMTP, editierbar), Quell-Kennwort (maskiert) und optionaler
+Quell-Server-Override pro Zeile werden erfasst. Zentraler Quell-IMAP-Server gilt als
+Default für alle Zeilen. Passwörter verschlüsselt in `config.enc` (AES-256), nie im Repo.
+
 ## Roadmap
 
-- [ ] Core-Interfaces + Modelle
-- [ ] ExchangeOnlineTokenProvider (app-only, outlook.office365.com/.default)
-- [ ] ImapSource (MailKit, Quelle: Basic oder XOAUTH2)
-- [ ] ImapAppendTarget (MailKit XOAUTH2, APPEND mit Flags + INTERNALDATE)
-- [ ] MigrationEngine (Ordner-Mapping, Dedup über Message-Id, Dry-Run)
-- [ ] WinForms-GUI (Postfachliste/CSV, Mapping, Fortschritt, Log)
+- [x] Core-Interfaces + Modelle
+- [x] ExchangeOnlineTokenProvider (app-only, outlook.office365.com/.default)
+- [x] ImapSource (MailKit, Quelle: Basic oder XOAUTH2)
+- [x] ImapAppendTarget (MailKit XOAUTH2, APPEND mit Flags + INTERNALDATE)
+- [x] MigrationEngine (Ordner-Mapping, Dedup über Message-Id, Dry-Run)
+- [x] WinForms-GUI (Einrichtungs-Wizard, Postfach-Grid, Mapping, Fortschritt, Log)
 - [ ] GraphTarget (zweiter Provider)
 - [ ] App-Icon (Umschlag + Pfeil nach Wolke)

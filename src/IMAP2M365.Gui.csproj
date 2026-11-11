@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- WinForms-GUI (Windows-only). Referenziert die plattformneutrale Engine-DLL. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>IMAP2M365.Gui</RootNamespace>
+    <AssemblyName>IMAP2M365</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="IMAP2M365.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- EXO-Cmdlets in-process: Microsoft.PowerShell.SDK + Exchange-Online-Modul.
+         Das Modul ExchangeOnlineManagement wird zur Laufzeit erwartet (siehe ExoRunner). -->
+    <PackageReference Include="Microsoft.PowerShell.SDK" Version="7.*" />
+
+    <!-- Graph-App-Provisionierung + interaktiver Admin-Login -->
+    <PackageReference Include="Microsoft.Graph" Version="5.*" />
+    <PackageReference Include="Azure.Identity" Version="1.*" />
+  </ItemGroup>
+
+</Project>
