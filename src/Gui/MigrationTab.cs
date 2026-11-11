@@ -13,11 +13,23 @@ public sealed class MigrationTab : UserControl
     private readonly AppConfig _config;
     private readonly Action<string> _log;
 
-    private readonly Button _start = new() { Text = "Migration starten", Width = 160 };
-    private readonly Button _cancel = new() { Text = "Abbrechen", Width = 100, Enabled = false };
-    private readonly CheckBox _dryRun = new() { Text = "Dry-Run", Checked = true, AutoSize = true };
-    private readonly Label _backendLabel = new() { Text = "Ziel-Backend:", AutoSize = true, Padding = new Padding(12, 6, 2, 0) };
-    private readonly ComboBox _backend = new() { Width = 180, DropDownStyle = ComboBoxStyle.DropDownList };
+    private static Button ActionButton(string text, bool enabled = true) => new()
+    {
+        Text = text,
+        Enabled = enabled,
+        AutoSize = true,
+        AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        MinimumSize = new Size(0, 30),
+        Padding = new Padding(12, 4, 12, 4),
+        Margin = new Padding(4, 4, 4, 4),
+        Anchor = AnchorStyles.Left
+    };
+
+    private readonly Button _start = ActionButton("Migration starten");
+    private readonly Button _cancel = ActionButton("Abbrechen", enabled: false);
+    private readonly CheckBox _dryRun = new() { Text = "Dry-Run", Checked = true, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(12, 4, 4, 4) };
+    private readonly Label _backendLabel = new() { Text = "Ziel-Backend:", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(16, 4, 2, 4) };
+    private readonly ComboBox _backend = new() { Width = 180, DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left, Margin = new Padding(4) };
     private readonly ProgressBar _bar = new() { Dock = DockStyle.Top, Height = 22 };
     private readonly Label _state = new() { Dock = DockStyle.Top, Height = 22, Text = "Bereit." };
 
@@ -31,8 +43,14 @@ public sealed class MigrationTab : UserControl
         _backend.Items.AddRange(new object[] { "IMAP-APPEND (XOAUTH2)", "Microsoft Graph" });
         _backend.SelectedIndex = _config.TargetKind.Equals("Graph", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
 
-        var buttons = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 44, Padding = new Padding(8, 6, 8, 6) };
-        buttons.Controls.AddRange(new Control[] { _start, _cancel, _dryRun, _backendLabel, _backend });
+        // TableLayoutPanel richtet alle Elemente (Buttons/Checkbox/Label/Combo) vertikal zentriert aus.
+        var buttons = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Height = 46, ColumnCount = 5, RowCount = 1, Padding = new Padding(8, 4, 8, 4) };
+        for (int i = 0; i < 5; i++) buttons.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        buttons.Controls.Add(_start, 0, 0);
+        buttons.Controls.Add(_cancel, 1, 0);
+        buttons.Controls.Add(_dryRun, 2, 0);
+        buttons.Controls.Add(_backendLabel, 3, 0);
+        buttons.Controls.Add(_backend, 4, 0);
 
         Controls.Add(_state);
         Controls.Add(_bar);
@@ -40,6 +58,19 @@ public sealed class MigrationTab : UserControl
 
         _start.Click += async (_, _) => await RunAsync();
         _cancel.Click += (_, _) => _cts?.Cancel();
+    }
+
+    /// <summary>Schreibt Backend-/Dry-Run-Auswahl in die Konfiguration – für Speichern.</summary>
+    public void FlushToConfig()
+    {
+        _config.TargetKind = _backend.SelectedIndex == 1 ? "Graph" : "ImapAppend";
+    }
+
+    /// <summary>Lädt die Konfiguration in die Bedienelemente – nach Profil-Load.</summary>
+    public void LoadFromConfig()
+    {
+        _backend.SelectedIndex = _config.TargetKind.Equals("Graph", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+        _dryRun.Checked = _config.DryRun;
     }
 
     private async Task RunAsync()

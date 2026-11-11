@@ -23,8 +23,30 @@ public sealed class AppConfig
     public string TargetKind { get; set; } = "ImapAppend"; // ImapAppend | Graph
     public string? ScopeGroupId { get; set; } // optionale ApplicationAccessPolicy-Gruppe
 
+    // Profil/Kunde (zur Anzeige; Dateiname bestimmt den tatsächlichen Speicherort)
+    public string ProfileName { get; set; } = "";
+
     // Postfachzeilen inkl. Quell-Credentials (maskiert in der GUI, verschlüsselt auf Platte)
     public List<MailboxRow> Mailboxes { get; set; } = new();
+
+    /// <summary>Übernimmt alle Werte eines geladenen Profils in diese (von den Reitern gehaltene) Instanz.</summary>
+    public void CopyFrom(AppConfig other)
+    {
+        TenantId = other.TenantId;
+        ClientId = other.ClientId;
+        ClientSecret = other.ClientSecret;
+        SpObjectId = other.SpObjectId;
+        TargetDomain = other.TargetDomain;
+        SourceHost = other.SourceHost;
+        SourcePort = other.SourcePort;
+        SourceUseSsl = other.SourceUseSsl;
+        DryRun = other.DryRun;
+        ExcludedFolders = other.ExcludedFolders;
+        TargetKind = other.TargetKind;
+        ScopeGroupId = other.ScopeGroupId;
+        ProfileName = other.ProfileName;
+        Mailboxes = other.Mailboxes;
+    }
 }
 
 /// <summary>Eine Zeile im Setup-Grid: Ziel aus EXO ausgelesen, Quelle vom Benutzer ergänzt.</summary>

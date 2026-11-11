@@ -119,7 +119,12 @@ public sealed class SetupTab : UserControl
             _log($"Fertig: ClientId {appId}. Secret und ServicePrincipal-ObjectId liegen in der Konfiguration.");
             _log("Hinweis: ServicePrincipal in EXO wird in Schritt 4 registriert.");
         }
-        catch (Exception ex) { _log("Provisionierung fehlgeschlagen: " + ex.Message); }
+        catch (Exception ex)
+        {
+            _log("Provisionierung fehlgeschlagen: " + ex.Message);
+            for (var inner = ex.InnerException; inner != null; inner = inner.InnerException)
+                _log("  Ursache: " + inner.Message);
+        }
     }
 
     private void Connect()
@@ -146,16 +151,33 @@ public sealed class SetupTab : UserControl
         catch (Exception ex) { _log("Postfächer laden fehlgeschlagen: " + ex.Message); }
     }
 
-    private void ApplySetup()
+    /// <summary>Schreibt die aktuellen Eingabefelder (inkl. Grid) in die Konfiguration – für Speichern.</summary>
+    public void FlushToConfig()
     {
-        if (_exo is null) { _log("Erst mit EXO verbinden (Schritt 2)."); return; }
-
+        _config.TenantId = _tenant.Text.Trim();
         _config.SourceHost = _srcHost.Text.Trim();
         _config.SourcePort = (int)_srcPort.Value;
         _config.SourceUseSsl = _srcSsl.Checked;
         _config.DryRun = _dryRun.Checked;
         CommitGridEdits();
+    }
 
+    /// <summary>Lädt die Konfiguration in die Eingabefelder – nach Profil-Load.</summary>
+    public void LoadFromConfig()
+    {
+        _tenant.Text = _config.TenantId;
+        _srcHost.Text = _config.SourceHost;
+        _srcPort.Value = Math.Clamp(_config.SourcePort, (int)_srcPort.Minimum, (int)_srcPort.Maximum);
+        _srcSsl.Checked = _config.SourceUseSsl;
+        _dryRun.Checked = _config.DryRun;
+        Rebind();
+    }
+
+    private void ApplySetup()
+    {
+        if (_exo is null) { _log("Erst mit EXO verbinden (Schritt 2)."); return; }
+
+        FlushToConfig();
         var dry = _dryRun.Checked;
         _log(dry ? "Dry-Run: zeige nur, was geändert würde." : "Führe Einrichtung aus.");
 
@@ -230,8 +252,9 @@ public sealed class InputDialog : Form
     private readonly TextBox _box = new() { Dock = DockStyle.Top, Width = 380 };
     public string Value => _box.Text;
 
-    public InputDialog(string prompt)
+    public InputDialog(string prompt, bool password = false)
     {
+        if (password) _box.UseSystemPasswordChar = true;
         Text = "IMAP2M365";
         Width = 420; Height = 150; StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = false; MinimizeBox = false;

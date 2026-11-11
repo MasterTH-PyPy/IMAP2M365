@@ -26,6 +26,15 @@ public sealed class GraphProvisioner
     private const string ImapAccessAsApp = "a4b8392a-d8d1-4954-a029-8e668a39a170"; // Office365 EXO: IMAP.AccessAsApp (App)
     private const string MailReadWrite   = "e2a3a72e-5f79-4c64-b1b1-878b674786c9"; // Graph: Mail.ReadWrite (App)
 
+    // Delegated-Scopes, die der anmeldende Admin für die Provisionierung braucht.
+    // Explizit anfordern (nicht ".default") -> löst beim ersten Login den Consent-Dialog aus.
+    private static readonly string[] GraphScopes =
+    {
+        "https://graph.microsoft.com/Application.ReadWrite.All",
+        "https://graph.microsoft.com/AppRoleAssignment.ReadWrite.All",
+        "https://graph.microsoft.com/Directory.ReadWrite.All"
+    };
+
     private readonly HttpClient _http = new();
 
     public Action<string>? Log { get; set; }
@@ -127,8 +136,7 @@ public sealed class GraphProvisioner
 
     private async Task<string> TokenAsync(TokenCredential cred, CancellationToken ct)
     {
-        var t = await cred.GetTokenAsync(new TokenRequestContext(new[] { "https://graph.microsoft.com/.default" }), ct)
-            .ConfigureAwait(false);
+        var t = await cred.GetTokenAsync(new TokenRequestContext(GraphScopes), ct).ConfigureAwait(false);
         return t.Token;
     }
 
