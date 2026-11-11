@@ -83,8 +83,23 @@ public sealed class ImapAppendTarget : IMailTarget
         if (message.IsAnswered) flags |= MessageFlags.Answered;
         if (message.IsDraft) flags |= MessageFlags.Draft;
 
-        // INTERNALDATE -> Empfangsdatum bleibt im Zielpostfach korrekt.
-        await folder.AppendAsync(message.Mime, flags, message.InternalDate, ct).ConfigureAwait(false);
+        // Exchange Online weist manche APPENDs mit Flags+Datum ab ("Command Argument Error").
+        // Deshalb gestuft: erst mit Flags + INTERNALDATE, dann nur Flags, zuletzt nackt.
+        try
+        {
+            await folder.AppendAsync(message.Mime, flags, message.InternalDate, ct).ConfigureAwait(false);
+        }
+        catch (MailKit.Net.Imap.ImapCommandException)
+        {
+            try
+            {
+                await folder.AppendAsync(message.Mime, flags, ct).ConfigureAwait(false);
+            }
+            catch (MailKit.Net.Imap.ImapCommandException)
+            {
+                await folder.AppendAsync(message.Mime, ct).ConfigureAwait(false);
+            }
+        }
     }
 
     public async IAsyncEnumerable<TargetMessage> ListAsync(

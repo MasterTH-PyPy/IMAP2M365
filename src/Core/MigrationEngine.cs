@@ -34,7 +34,7 @@ public sealed class MigrationEngine
         string mailbox, IMailSource source, IMailTarget target, CancellationToken ct,
         int mailboxIndex = 1, int mailboxTotal = 1)
     {
-        long copied = 0, skipped = 0;
+        long copied = 0, skipped = 0, failed = 0;
 
         var folders = await source.ListFoldersAsync(ct).ConfigureAwait(false);
         var selectable = folders
@@ -79,8 +79,18 @@ public sealed class MigrationEngine
                 }
 
                 if (_cfg.Debug) _log?.Invoke($"  → kopiere: {Trim(msg.Mime.Subject)}");
-                await target.AppendAsync(handle, msg, ct).ConfigureAwait(false);
-                copied++;
+                try
+                {
+                    await target.AppendAsync(handle, msg, ct).ConfigureAwait(false);
+                    copied++;
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    failed++;
+                    _log?.Invoke($"  ! übersprungen (Fehler): {Trim(msg.Mime.Subject)} – {ex.Message}");
+                    continue;
+                }
 
                 if (testMode && copied >= _cfg.TestMessageLimit)
                 {
@@ -95,6 +105,7 @@ public sealed class MigrationEngine
             deleted = await ReconcileAsync(mailbox, target, expectedByHandle, ct).ConfigureAwait(false);
 
         _log?.Invoke($"[{mailbox}] fertig: {copied} kopiert, {skipped} übersprungen" +
+                     (failed > 0 ? $", {failed} fehlerhaft" : "") +
                      (_cfg.Mirror ? $", {deleted} im Ziel entfernt (Spiegel)" : testMode ? " (Testmodus)" : ""));
         return (copied, skipped);
     }
