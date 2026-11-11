@@ -49,12 +49,40 @@ public sealed class ExoRunner : IDisposable
         if (found.Count == 0)
         {
             if (!AutoInstallModule)
-                throw new InvalidOperationException("Modul ExchangeOnlineManagement fehlt. Bitte installieren oder AutoInstallModule aktivieren.");
+                throw new InvalidOperationException(
+                    "Modul ExchangeOnlineManagement fehlt. Einmalig installieren: " +
+                    "Install-Module ExchangeOnlineManagement -Scope CurrentUser");
             Log?.Invoke("Installiere Modul ExchangeOnlineManagement (CurrentUser) ...");
+
             using var install = NewPs();
-            install.AddScript("Install-Module ExchangeOnlineManagement -Scope CurrentUser -Force -AllowClobber");
+            // Komplett nicht-interaktiv: der In-Process-Host kann keine Ja/Nein-Prompts beantworten.
+            // Bevorzugt Install-PSResource (PS7, braucht keinen alten NuGet-Provider); sonst Fallback
+            // mit Provider-Bootstrap und getrustetem PSGallery.
+            install.AddScript(@"
+                $ErrorActionPreference = 'Stop'
+                $ConfirmPreference = 'None'
+                try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch {}
+
+                if (Get-Command Install-PSResource -ErrorAction SilentlyContinue) {
+                    Install-PSResource -Name ExchangeOnlineManagement -Scope CurrentUser -TrustRepository -Quiet -Reinstall:$false
+                } else {
+                    if (-not (Get-PackageProvider -ListAvailable -Name NuGet -ErrorAction SilentlyContinue)) {
+                        Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -ForceBootstrap -Scope CurrentUser | Out-Null
+                    }
+                    if ((Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue).InstallationPolicy -ne 'Trusted') {
+                        Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+                    }
+                    Install-Module ExchangeOnlineManagement -Scope CurrentUser -Force -AllowClobber -Confirm:$false
+                }");
             install.Invoke();
-            CheckErrors(install, "Install-Module");
+            if (install.HadErrors)
+            {
+                var msg = string.Join("; ", install.Streams.Error.Select(e => e.ToString()));
+                throw new InvalidOperationException(
+                    "Automatische Installation fehlgeschlagen (" + msg + "). " +
+                    "Bitte einmalig manuell in einer PowerShell ausführen: " +
+                    "Install-Module ExchangeOnlineManagement -Scope CurrentUser -Force");
+            }
         }
         using var import = NewPs();
         import.AddScript("Import-Module ExchangeOnlineManagement -ErrorAction Stop");
