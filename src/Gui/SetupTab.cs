@@ -19,10 +19,20 @@ public sealed class SetupTab : UserControl
     private readonly CheckBox _dryRun = new() { Text = "Dry-Run (nur prüfen)", Checked = true, AutoSize = true };
     private readonly CheckBox _includeShared = new() { Text = "Freigegebene Postfächer einschließen", Checked = true, AutoSize = true };
 
-    private readonly Button _provision = new() { Text = "1. Entra-App anlegen…", Width = 170 };
-    private readonly Button _connect = new() { Text = "2. Mit EXO verbinden", Width = 170 };
-    private readonly Button _loadMbx = new() { Text = "3. Postfächer laden", Width = 170 };
-    private readonly Button _apply = new() { Text = "4. Einrichtung ausführen", Width = 170 };
+    private static Button StepButton(string text) => new()
+    {
+        Text = text,
+        AutoSize = true,
+        AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        MinimumSize = new Size(0, 30),
+        Padding = new Padding(12, 4, 12, 4),
+        Margin = new Padding(4, 6, 4, 6)
+    };
+
+    private readonly Button _provision = StepButton("1. Entra-App anlegen…");
+    private readonly Button _connect = StepButton("2. Mit EXO verbinden");
+    private readonly Button _loadMbx = StepButton("3. Postfächer laden");
+    private readonly Button _apply = StepButton("4. Einrichtung ausführen");
 
     private readonly DataGridView _grid = new()
     {
@@ -57,7 +67,7 @@ public sealed class SetupTab : UserControl
         top.Controls.Add(_srcSsl, 3, 1);
         top.Controls.Add(_dryRun, 4, 1);
 
-        var buttons = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 44, Padding = new Padding(8, 4, 8, 4) };
+        var buttons = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 52, WrapContents = false, Padding = new Padding(8, 6, 8, 6) };
         buttons.Controls.AddRange(new Control[] { _provision, _connect, _loadMbx, _apply });
 
         Controls.Add(_grid);
