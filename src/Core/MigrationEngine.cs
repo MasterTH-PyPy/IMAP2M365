@@ -6,6 +6,10 @@ public sealed record MigrationProgress(
     int MessageIndex, int MessageTotal,
     long MessagesCopied, long MessagesSkipped);
 
+/// <summary>Ergebnis eines Postfach-Laufs inkl. Traffic (Bytes).</summary>
+public sealed record MigrationResult(
+    long Copied, long Skipped, long Failed, long BytesDown, long BytesUp, long Deleted);
+
 /// <summary>
 /// Fährt einen Quell-IMAP gegen ein Ziel-Backend: Ordner mappen, Nachrichten streamen,
 /// im Dry-Run nur zählen, sonst APPEND mit Dedup (Message-Id) für saubere Resumes.
@@ -30,11 +34,11 @@ public sealed class MigrationEngine
         _log = log;
     }
 
-    public async Task<(long copied, long skipped)> RunAsync(
+    public async Task<MigrationResult> RunAsync(
         string mailbox, IMailSource source, IMailTarget target, CancellationToken ct,
         int mailboxIndex = 1, int mailboxTotal = 1)
     {
-        long copied = 0, skipped = 0, failed = 0;
+        long copied = 0, skipped = 0, failed = 0, bytesDown = 0, bytesUp = 0;
 
         var folders = await source.ListFoldersAsync(ct).ConfigureAwait(false);
         var selectable = folders
@@ -67,6 +71,7 @@ public sealed class MigrationEngine
                 msgIdx++;
 
                 if (_cfg.Mirror) expectedByHandle[handle].Add(Normalize(msg.MessageId));
+                bytesDown += msg.Size; // heruntergeladen (jede gelesene Nachricht)
 
                 _progress?.Report(new MigrationProgress(
                     mailboxIndex, mailboxTotal, mailbox, fi + 1, selectable.Count, folder.FullName,
@@ -83,6 +88,7 @@ public sealed class MigrationEngine
                 {
                     await target.AppendAsync(handle, msg, ct).ConfigureAwait(false);
                     copied++;
+                    bytesUp += msg.Size; // hochgeladen (tatsächlich kopiert)
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
@@ -98,7 +104,7 @@ public sealed class MigrationEngine
                 if (testMode && copied >= _cfg.TestMessageLimit)
                 {
                     _log?.Invoke($"[{mailbox}] Testmodus: {copied} Nachrichten kopiert – Abbruch wie vorgesehen.");
-                    return (copied, skipped);
+                    return new MigrationResult(copied, skipped, failed, bytesDown, bytesUp, 0);
                 }
             }
         }
@@ -110,7 +116,7 @@ public sealed class MigrationEngine
         _log?.Invoke($"[{mailbox}] fertig: {copied} kopiert, {skipped} übersprungen" +
                      (failed > 0 ? $", {failed} fehlerhaft" : "") +
                      (_cfg.Mirror ? $", {deleted} im Ziel entfernt (Spiegel)" : testMode ? " (Testmodus)" : ""));
-        return (copied, skipped);
+        return new MigrationResult(copied, skipped, failed, bytesDown, bytesUp, deleted);
     }
 
     /// <summary>

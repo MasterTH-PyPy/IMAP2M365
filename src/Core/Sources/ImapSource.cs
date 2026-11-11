@@ -93,7 +93,7 @@ public sealed class ImapSource : IMailSource
         for (int i = 0; i < mf.Count; i++)
         {
             ct.ThrowIfCancellationRequested();
-            var summary = (await mf.FetchAsync(i, i, MessageSummaryItems.Flags | MessageSummaryItems.InternalDate, ct)
+            var summary = (await mf.FetchAsync(i, i, MessageSummaryItems.Flags | MessageSummaryItems.InternalDate | MessageSummaryItems.Size, ct)
                 .ConfigureAwait(false))[0];
             var mime = await mf.GetMessageAsync(i, ct).ConfigureAwait(false);
 
@@ -104,7 +104,8 @@ public sealed class ImapSource : IMailSource
                 IsSeen: flags.HasFlag(MessageFlags.Seen),
                 IsFlagged: flags.HasFlag(MessageFlags.Flagged),
                 IsAnswered: flags.HasFlag(MessageFlags.Answered),
-                IsDraft: flags.HasFlag(MessageFlags.Draft));
+                IsDraft: flags.HasFlag(MessageFlags.Draft),
+                Size: (long)(summary.Size ?? 0));
         }
     }
 

@@ -176,7 +176,7 @@ public sealed class MigrationTab : UserControl
         var activeTotal = active.Count;
 
         int activeJobs = 0, completed = 0;
-        long totalCopied = 0, totalSkipped = 0, totalFailed = 0;
+        long totalCopied = 0, totalSkipped = 0, totalFailed = 0, totalDown = 0, totalUp = 0;
         var perMailboxCopied = new System.Collections.Concurrent.ConcurrentDictionary<string, long>();
 
         // Logger je Postfach: schreibt in den dedizierten Job-Puffer UND ins globale Protokoll.
@@ -299,11 +299,15 @@ public sealed class MigrationTab : UserControl
             }
 
             var engine = new MigrationEngine(cfg, mapFolder: MapFolder, progress: jobProgress, log: jlog);
-            var (copied, skipped) = await engine.RunAsync(row.TargetSmtp, source, target, ct, index, activeTotal);
-            perMailboxCopied[row.TargetSmtp] = copied;
-            Interlocked.Add(ref totalCopied, copied);
-            Interlocked.Add(ref totalSkipped, skipped);
-            jlog($"{row.TargetSmtp}: {copied} kopiert, {skipped} übersprungen" + (testMode ? " (Testmodus)" : mirror ? " (Spiegel)" : ""));
+            var res = await engine.RunAsync(row.TargetSmtp, source, target, ct, index, activeTotal);
+            perMailboxCopied[row.TargetSmtp] = res.Copied;
+            Interlocked.Add(ref totalCopied, res.Copied);
+            Interlocked.Add(ref totalSkipped, res.Skipped);
+            Interlocked.Add(ref totalFailed, res.Failed);
+            Interlocked.Add(ref totalDown, res.BytesDown);
+            Interlocked.Add(ref totalUp, res.BytesUp);
+            jlog($"{row.TargetSmtp}: {res.Copied} kopiert, {res.Skipped} übersprungen, {Human(res.BytesUp)} hochgeladen" +
+                 (testMode ? " (Testmodus)" : mirror ? " (Spiegel)" : ""));
         }
 
         _start.Enabled = false; _cancel.Enabled = true;
@@ -329,12 +333,34 @@ public sealed class MigrationTab : UserControl
                     }
                 });
 
-            SetState($"Fertig. {Interlocked.Read(ref totalCopied)} kopiert, {Interlocked.Read(ref totalSkipped)} übersprungen" +
-                     (Interlocked.Read(ref totalFailed) > 0 ? $", {Interlocked.Read(ref totalFailed)} fehlerhaft" : ""));
+            var cop = Interlocked.Read(ref totalCopied);
+            var skp = Interlocked.Read(ref totalSkipped);
+            var fai = Interlocked.Read(ref totalFailed);
+            var down = Interlocked.Read(ref totalDown);
+            var up = Interlocked.Read(ref totalUp);
+
+            SetState($"Fertig. {cop} kopiert, {skp} übersprungen" + (fai > 0 ? $", {fai} fehlerhaft" : "") + $" · {Human(up)} hochgeladen");
+            _log($"Statistik dieser Migration: {cop} Nachrichten · {Human(up)} hochgeladen · {Human(down)} heruntergeladen" +
+                 (fai > 0 ? $" · {fai} fehlerhaft" : ""));
+
+            // Kumuliert in die Konfiguration schreiben (wird beim Speichern des Profils persistiert).
+            _config.StatMessagesCopied += cop;
+            _config.StatBytesUp += up;
+            _config.StatBytesDown += down;
+            _log($"Profil-Gesamtstatistik: {_config.StatMessagesCopied} Nachrichten · {Human(_config.StatBytesUp)} hoch · {Human(_config.StatBytesDown)} runter (Profil speichern, um es zu sichern).");
         }
         catch (OperationCanceledException) { SetState("Abgebrochen."); _log("Migration abgebrochen."); }
         catch (Exception ex) { SetState("Fehler."); _log("Migration fehlgeschlagen: " + ex.Message); }
         finally { _start.Enabled = true; _cancel.Enabled = false; _cts?.Dispose(); _cts = null; }
+    }
+
+    /// <summary>Bytes menschenlesbar (KB/MB/GB).</summary>
+    private static string Human(long bytes)
+    {
+        string[] units = { "B", "KB", "MB", "GB", "TB" };
+        double v = bytes; int u = 0;
+        while (v >= 1024 && u < units.Length - 1) { v /= 1024; u++; }
+        return u == 0 ? $"{bytes} B" : $"{v:0.##} {units[u]}";
     }
 
     /// <summary>Verknüpft den Abbruch-Token mit einem Timeout, damit Verbindungsversuche nicht ewig hängen.</summary>

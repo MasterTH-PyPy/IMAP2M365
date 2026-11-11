@@ -9,7 +9,8 @@ public sealed record SourceMessage(
     bool IsSeen,
     bool IsFlagged,
     bool IsAnswered,
-    bool IsDraft)
+    bool IsDraft,
+    long Size = 0) // RFC822.SIZE vom Quellserver (für die Traffic-Statistik)
 {
     /// <summary>Message-Id-Header, normalisiert; für Dedup beim Resume.</summary>
     public string MessageId => Mime.MessageId ?? string.Empty;

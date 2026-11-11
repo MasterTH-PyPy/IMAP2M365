@@ -26,6 +26,11 @@ public sealed class AppConfig
     // Profil/Kunde (zur Anzeige; Dateiname bestimmt den tatsächlichen Speicherort)
     public string ProfileName { get; set; } = "";
 
+    // Kumulierte Statistik (über alle Läufe dieses Profils)
+    public long StatMessagesCopied { get; set; }
+    public long StatBytesDown { get; set; }
+    public long StatBytesUp { get; set; }
+
     // Postfachzeilen inkl. Quell-Credentials (maskiert in der GUI, verschlüsselt auf Platte)
     public List<MailboxRow> Mailboxes { get; set; } = new();
 
@@ -45,6 +50,9 @@ public sealed class AppConfig
         TargetKind = other.TargetKind;
         ScopeGroupId = other.ScopeGroupId;
         ProfileName = other.ProfileName;
+        StatMessagesCopied = other.StatMessagesCopied;
+        StatBytesDown = other.StatBytesDown;
+        StatBytesUp = other.StatBytesUp;
         Mailboxes = other.Mailboxes;
     }
 }
