@@ -1,3 +1,5 @@
+using IMAP2M365.Sources;
+
 namespace IMAP2M365.Gui;
 
 /// <summary>
@@ -99,13 +101,49 @@ public sealed class SetupTab : UserControl
         _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Quell-User", DataPropertyName = "SourceUser" });
         _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Quell-Kennwort", DataPropertyName = "SourcePassword" });
         _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Quell-Server (optional)", DataPropertyName = "SourceHostOverride" });
+        _grid.Columns.Add(new DataGridViewButtonColumn { HeaderText = "Test", Text = "Test", UseColumnTextForButtonValue = true, FillWeight = 45 });
 
-        // Kennwort-Spalte maskieren
+        // Kennwort-Spalte maskieren (nur Anzeige; der echte Wert bleibt im gebundenen Objekt)
         _grid.CellFormatting += (s, e) =>
         {
             if (_grid.Columns[e.ColumnIndex].DataPropertyName == "SourcePassword" && e.Value is string pw && pw.Length > 0)
                 e.Value = new string('•', Math.Min(pw.Length, 10));
         };
+
+        // Klick auf „Test" prüft die Quell-IMAP-Einstellungen genau dieser Zeile.
+        _grid.CellContentClick += async (s, e) =>
+        {
+            if (e.RowIndex < 0) return;
+            if (!string.Equals(_grid.Columns[e.ColumnIndex].HeaderText, "Test", StringComparison.Ordinal)) return;
+            if (_grid.Rows[e.RowIndex].DataBoundItem is MailboxRow row) await TestRowAsync(row);
+        };
+    }
+
+    /// <summary>Testet Verbindung + Login der Quelle für eine Zeile (zentraler Server oder Zeilen-Override).</summary>
+    private async Task TestRowAsync(MailboxRow row)
+    {
+        _grid.EndEdit();
+
+        var host = (string.IsNullOrWhiteSpace(row.SourceHostOverride) ? _srcHost.Text : row.SourceHostOverride!).Trim();
+        var port = row.SourcePortOverride ?? (int)_srcPort.Value;
+        var ssl = _srcSsl.Checked;
+
+        if (string.IsNullOrWhiteSpace(host)) { _log($"Test {row.TargetSmtp}: kein Quell-Server gesetzt."); return; }
+        if (string.IsNullOrWhiteSpace(row.SourceUser)) { _log($"Test {row.TargetSmtp}: kein Quell-User gesetzt."); return; }
+
+        _log($"Test {row.TargetSmtp}: verbinde {host}:{port} (SSL={ssl}) als {row.SourceUser} …");
+        try
+        {
+            await using var src = new ImapSource(host, port, ssl, row.SourceUser, row.SourcePassword);
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            await src.ConnectAsync(cts.Token);
+            var folders = await src.ListFoldersAsync(cts.Token);
+            _log($"Test {row.TargetSmtp}: OK – Login erfolgreich, {folders.Count} Ordner gefunden.");
+        }
+        catch (Exception ex)
+        {
+            _log($"Test {row.TargetSmtp}: FEHLER – {ex.Message}");
+        }
     }
 
     private void WireEvents()
