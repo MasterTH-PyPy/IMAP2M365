@@ -42,6 +42,9 @@ public sealed class MainForm : Form
         Height = 720;
         StartPosition = FormStartPosition.CenterScreen;
 
+        // Fenster-/Taskbar-Icon aus dem eingebetteten EXE-Icon (ApplicationIcon) setzen.
+        try { Icon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!); } catch { /* egal */ }
+
         var tabs = new TabControl { Dock = DockStyle.Fill };
 
         _setupTab = new SetupTab(_config, Log);

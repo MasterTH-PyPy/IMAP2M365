@@ -19,6 +19,11 @@ public sealed class SetupTab : UserControl
     private readonly CheckBox _dryRun = new() { Text = "Dry-Run (nur prüfen)", Checked = true, AutoSize = true };
     private readonly CheckBox _includeShared = new() { Text = "Freigegebene Postfächer einschließen", Checked = true, AutoSize = true };
 
+    // App-Registrierung: nach Schritt 1 befüllt, aber auch manuell für bestehende Apps eingebbar.
+    private readonly TextBox _clientId = new() { Width = 260 };
+    private readonly TextBox _secret = new() { Width = 200, UseSystemPasswordChar = true };
+    private readonly TextBox _spObjectId = new() { Width = 200 };
+
     private static Button StepButton(string text) => new()
     {
         Text = text,
@@ -29,7 +34,8 @@ public sealed class SetupTab : UserControl
         Margin = new Padding(4, 6, 4, 6)
     };
 
-    private readonly Button _provision = StepButton("1. Entra-App anlegen…");
+    private readonly Button _provision = StepButton("1a. Entra-App anlegen…");
+    private readonly Button _readApp = StepButton("1b. App auslesen…");
     private readonly Button _connect = StepButton("2. Mit EXO verbinden");
     private readonly Button _loadMbx = StepButton("3. Postfächer laden");
     private readonly Button _apply = StepButton("4. Einrichtung ausführen");
@@ -54,7 +60,7 @@ public sealed class SetupTab : UserControl
 
     private void BuildUi()
     {
-        var top = new TableLayoutPanel { Dock = DockStyle.Top, Height = 120, ColumnCount = 6, Padding = new Padding(8) };
+        var top = new TableLayoutPanel { Dock = DockStyle.Top, Height = 150, ColumnCount = 6, Padding = new Padding(8) };
 
         top.Controls.Add(new Label { Text = "Tenant (…onmicrosoft.com):", AutoSize = true }, 0, 0);
         top.Controls.Add(_tenant, 1, 0);
@@ -67,8 +73,16 @@ public sealed class SetupTab : UserControl
         top.Controls.Add(_srcSsl, 3, 1);
         top.Controls.Add(_dryRun, 4, 1);
 
+        // App-Registrierung: ClientId/Secret/ServicePrincipal-ObjectId sichtbar + editierbar.
+        top.Controls.Add(new Label { Text = "App ClientId:", AutoSize = true }, 0, 2);
+        top.Controls.Add(_clientId, 1, 2);
+        top.Controls.Add(new Label { Text = "Secret:", AutoSize = true }, 2, 2);
+        top.Controls.Add(_secret, 3, 2);
+        top.Controls.Add(new Label { Text = "SP-ObjectId:", AutoSize = true }, 4, 2);
+        top.Controls.Add(_spObjectId, 5, 2);
+
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 52, WrapContents = false, Padding = new Padding(8, 6, 8, 6) };
-        buttons.Controls.AddRange(new Control[] { _provision, _connect, _loadMbx, _apply });
+        buttons.Controls.AddRange(new Control[] { _provision, _readApp, _connect, _loadMbx, _apply });
 
         Controls.Add(_grid);
         Controls.Add(buttons);
@@ -96,9 +110,57 @@ public sealed class SetupTab : UserControl
     private void WireEvents()
     {
         _provision.Click += async (_, _) => await ProvisionAsync();
+        _readApp.Click += async (_, _) => await ReadExistingAppAsync();
         _connect.Click += (_, _) => Connect();
         _loadMbx.Click += (_, _) => LoadMailboxes();
         _apply.Click += (_, _) => ApplySetup();
+    }
+
+    /// <summary>Überträgt die App-Werte aus der Konfig in die Eingabefelder.</summary>
+    private void ShowAppFields()
+    {
+        _clientId.Text = _config.ClientId;
+        _secret.Text = _config.ClientSecret;
+        _spObjectId.Text = _config.SpObjectId;
+    }
+
+    /// <summary>
+    /// Liest vorhandene App-Registrierungen aus dem Tenant (Graph), lässt auswählen und übernimmt
+    /// ClientId + ServicePrincipal-ObjectId. Ein frisches Secret wird erzeugt (bestehende Secrets
+    /// sind nicht auslesbar).
+    /// </summary>
+    private async Task ReadExistingAppAsync()
+    {
+        try
+        {
+            _config.TenantId = _tenant.Text.Trim();
+            if (string.IsNullOrWhiteSpace(_config.TenantId)) { _log("Bitte Tenant angeben."); return; }
+
+            var graph = new GraphProvisioner { Log = _log };
+            var apps = await graph.ListApplicationsAsync(_config.TenantId, CancellationToken.None);
+            if (apps.Count == 0) { _log("Keine App-Registrierungen gefunden. Bitte Schritt 1a verwenden."); return; }
+
+            var choice = ChooserDialog.Pick("App-Registrierung auswählen:",
+                apps.Select(a => $"{a.DisplayName}  —  {a.AppId}").ToList());
+            if (choice < 0) return;
+
+            var picked = apps[choice];
+            var includeGraph = _config.TargetKind.Equals("Graph", StringComparison.OrdinalIgnoreCase);
+            var (spObj, secret) = await graph.PrepareExistingAppAsync(
+                _config.TenantId, picked.AppObjectId, picked.AppId, includeGraph, CancellationToken.None);
+
+            _config.ClientId = picked.AppId;
+            _config.SpObjectId = spObj;
+            _config.ClientSecret = secret;
+            ShowAppFields();
+            _log($"App übernommen: {picked.DisplayName} (ClientId {picked.AppId}). Frisches Secret erzeugt.");
+        }
+        catch (Exception ex)
+        {
+            _log("App auslesen fehlgeschlagen: " + ex.Message);
+            for (var inner = ex.InnerException; inner != null; inner = inner.InnerException)
+                _log("  Ursache: " + inner.Message);
+        }
     }
 
     private async Task ProvisionAsync()
@@ -116,6 +178,7 @@ public sealed class SetupTab : UserControl
             _config.ClientId = appId;
             _config.ClientSecret = secret;
             _config.SpObjectId = spObj;
+            ShowAppFields();
             _log($"Fertig: ClientId {appId}. Secret und ServicePrincipal-ObjectId liegen in der Konfiguration.");
             _log("Hinweis: ServicePrincipal in EXO wird in Schritt 4 registriert.");
         }
@@ -159,6 +222,9 @@ public sealed class SetupTab : UserControl
         _config.SourcePort = (int)_srcPort.Value;
         _config.SourceUseSsl = _srcSsl.Checked;
         _config.DryRun = _dryRun.Checked;
+        _config.ClientId = _clientId.Text.Trim();
+        _config.ClientSecret = _secret.Text;
+        _config.SpObjectId = _spObjectId.Text.Trim();
         CommitGridEdits();
     }
 
@@ -170,6 +236,7 @@ public sealed class SetupTab : UserControl
         _srcPort.Value = Math.Clamp(_config.SourcePort, (int)_srcPort.Minimum, (int)_srcPort.Maximum);
         _srcSsl.Checked = _config.SourceUseSsl;
         _dryRun.Checked = _config.DryRun;
+        ShowAppFields();
         Rebind();
     }
 
@@ -268,5 +335,38 @@ public sealed class InputDialog : Form
         Controls.Add(new Label { Text = prompt, Dock = DockStyle.Top, Height = 24 });
         Controls.Add(buttons);
         AcceptButton = ok; CancelButton = cancel;
+    }
+}
+
+/// <summary>Auswahldialog aus einer Liste (z. B. App-Registrierungen).</summary>
+public sealed class ChooserDialog : Form
+{
+    private readonly ListBox _list = new() { Dock = DockStyle.Fill };
+
+    private ChooserDialog(string prompt, IReadOnlyList<string> items)
+    {
+        Text = "IMAP2M365";
+        Width = 560; Height = 380; StartPosition = FormStartPosition.CenterParent;
+        FormBorderStyle = FormBorderStyle.Sizable; MinimizeBox = false;
+
+        foreach (var it in items) _list.Items.Add(it);
+        if (_list.Items.Count > 0) _list.SelectedIndex = 0;
+
+        var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Dock = DockStyle.Right, Width = 90 };
+        var cancel = new Button { Text = "Abbrechen", DialogResult = DialogResult.Cancel, Dock = DockStyle.Right, Width = 90 };
+        var buttons = new Panel { Dock = DockStyle.Bottom, Height = 40 };
+        buttons.Controls.Add(ok); buttons.Controls.Add(cancel);
+
+        Controls.Add(_list);
+        Controls.Add(new Label { Text = prompt, Dock = DockStyle.Top, Height = 24 });
+        Controls.Add(buttons);
+        AcceptButton = ok; CancelButton = cancel;
+    }
+
+    /// <summary>Zeigt den Dialog; gibt den gewählten Index zurück oder -1 bei Abbruch.</summary>
+    public static int Pick(string prompt, IReadOnlyList<string> items)
+    {
+        using var dlg = new ChooserDialog(prompt, items);
+        return dlg.ShowDialog() == DialogResult.OK ? dlg._list.SelectedIndex : -1;
     }
 }

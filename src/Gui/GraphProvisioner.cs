@@ -40,16 +40,23 @@ public sealed class GraphProvisioner
 
     public Action<string>? Log { get; set; }
 
+    private InteractiveBrowserCredential? _cred;
+    private string? _credTenant;
+
     private TokenCredential Credential(string tenantId)
     {
+        // Pro Instanz nur EIN Browser-Login; Folgeaufrufe nutzen den Token-Cache des Credentials.
+        if (_cred is not null && _credTenant == tenantId) return _cred;
+
         Log?.Invoke("Browser zur Anmeldung wird geöffnet – bitte Admin-Konto auswählen.");
-        return new InteractiveBrowserCredential(new InteractiveBrowserCredentialOptions
+        _cred = new InteractiveBrowserCredential(new InteractiveBrowserCredentialOptions
         {
             TenantId = tenantId,
             ClientId = "14d82eec-204b-4c2f-b7e8-296a70dab67e", // Microsoft Graph Command Line Tools (öffentlicher Client)
-            RedirectUri = new Uri("http://localhost"),         // Auth-Code-Flow mit lokalem Redirect
-            LoginHint = null
+            RedirectUri = new Uri("http://localhost")          // Auth-Code-Flow mit lokalem Redirect
         });
+        _credTenant = tenantId;
+        return _cred;
     }
 
     public async Task<(string appId, string spObjectId, string secret)> ProvisionAsync(
@@ -102,6 +109,63 @@ public sealed class GraphProvisioner
 
         Log?.Invoke("Admin-Consent erteilt.");
         return (appId, spObjectId, secret);
+    }
+
+    /// <summary>Listet vorhandene App-Registrierungen des Tenants (zur Auswahl einer bestehenden App).</summary>
+    public async Task<List<(string DisplayName, string AppId, string AppObjectId)>> ListApplicationsAsync(
+        string tenantId, CancellationToken ct)
+    {
+        var cred = Credential(tenantId);
+        var res = await GetAsync(cred, "/applications?$select=id,appId,displayName&$top=200", ct).ConfigureAwait(false);
+
+        var list = new List<(string, string, string)>();
+        foreach (var a in res.GetProperty("value").EnumerateArray())
+        {
+            list.Add((
+                a.TryGetProperty("displayName", out var dn) ? dn.GetString() ?? "(ohne Namen)" : "(ohne Namen)",
+                a.GetProperty("appId").GetString() ?? "",
+                a.GetProperty("id").GetString() ?? ""));
+        }
+        return list;
+    }
+
+    /// <summary>
+    /// Bereitet eine bestehende App für app-only XOAUTH2 vor: frisches Secret erzeugen
+    /// (bestehende sind nicht auslesbar), ServicePrincipal holen/anlegen, Consent best-effort.
+    /// </summary>
+    public async Task<(string spObjectId, string secret)> PrepareExistingAppAsync(
+        string tenantId, string appObjectId, string appId, bool includeGraphTarget, CancellationToken ct)
+    {
+        var cred = Credential(tenantId);
+
+        var secretJson = await PostAsync(cred, $"/applications/{appObjectId}/addPassword", new
+        {
+            passwordCredential = new { displayName = "IMAP2M365", endDateTime = DateTimeOffset.UtcNow.AddYears(1) }
+        }, ct).ConfigureAwait(false);
+        var secret = secretJson.GetProperty("secretText").GetString() ?? "";
+
+        var spRes = await GetAsync(cred, $"/servicePrincipals?$filter=appId eq '{appId}'&$select=id&$top=1", ct)
+            .ConfigureAwait(false);
+        var spArr = spRes.GetProperty("value");
+        var spObjectId = spArr.GetArrayLength() > 0
+            ? spArr[0].GetProperty("id").GetString()!
+            : await CreateServicePrincipalAsync(cred, appId, ct).ConfigureAwait(false);
+
+        await TryGrantConsentAsync(cred, spObjectId, ExchangeOnlineResourceAppId, ImapAccessAsApp, ct).ConfigureAwait(false);
+        if (includeGraphTarget)
+            await TryGrantConsentAsync(cred, spObjectId, GraphResourceAppId, MailReadWrite, ct).ConfigureAwait(false);
+
+        return (spObjectId, secret);
+    }
+
+    private async Task TryGrantConsentAsync(
+        TokenCredential cred, string clientSpId, string resourceAppId, string appRoleId, CancellationToken ct)
+    {
+        try { await GrantConsentAsync(cred, clientSpId, resourceAppId, appRoleId, ct).ConfigureAwait(false); }
+        catch (HttpRequestException ex) when (ex.Message.Contains("already", StringComparison.OrdinalIgnoreCase))
+        {
+            // appRoleAssignment existiert bereits -> ok
+        }
     }
 
     private async Task<string> CreateServicePrincipalAsync(TokenCredential cred, string appId, CancellationToken ct)
