@@ -76,4 +76,16 @@ Default für alle Zeilen. Passwörter verschlüsselt in `config.enc` (AES-256), 
 - [x] MigrationEngine (Ordner-Mapping, Dedup über Message-Id, Dry-Run)
 - [x] WinForms-GUI (Einrichtungs-Wizard, Postfach-Grid, Mapping, Fortschritt, Log)
 - [x] GraphTarget (zweiter Provider, MIME-Import + Throttling), umschaltbar in der GUI
-- [ ] App-Icon (Umschlag + Pfeil nach Wolke)
+- [x] Graph: große Nachrichten (>4 MB) über Upload-Session für Anhänge
+- [x] App-Icon (Umschlag + Pfeil zur Wolke), `assets/app-icon.svg` → `src/app.ico`
+
+## Graph-Backend: große Nachrichten
+
+Graph begrenzt den Request-Body auf 4 MB und bietet **keine** Upload-Session für rohes
+MIME. Daher:
+- **≤ 3 MB**: roher MIME-Import (`text/plain`, base64) — höchste Treue.
+- **> 3 MB**: Nachricht aus den MIME-Teilen gebaut (Betreff/Body/Empfänger),
+  Empfangs-/Sendedatum über MAPI-Extended-Properties (`0x0E06`/`0x0039`), kleine
+  Anhänge inline, große Anhänge via `createUploadSession` in 1,25-MiB-Blöcken.
+  Treue-Hinweis: exakte MIME-Struktur/Custom-Header gehen bei diesem Pfad verloren —
+  wer 1:1-Treue für Großmails braucht, nutzt das IMAP-APPEND-Backend (kein 4-MB-Limit).
