@@ -88,7 +88,10 @@ public sealed class MigrationEngine
                 catch (Exception ex)
                 {
                     failed++;
-                    _log?.Invoke($"  ! übersprungen (Fehler): {Trim(msg.Mime.Subject)} – {ex.Message}");
+                    _log?.Invoke(
+                        $"  ! FEHLER [{folder.FullName}] {msg.InternalDate.LocalDateTime:yyyy-MM-dd HH:mm} | " +
+                        $"Von: {FromOf(msg.Mime)} | Betreff: {Trim(msg.Mime.Subject)} | " +
+                        $"Message-Id: {(string.IsNullOrEmpty(msg.MessageId) ? "(keine)" : msg.MessageId)} – {ex.Message}");
                     continue;
                 }
 
@@ -149,4 +152,10 @@ public sealed class MigrationEngine
 
     private static string Trim(string? subject) =>
         string.IsNullOrEmpty(subject) ? "(kein Betreff)" : (subject.Length > 80 ? subject[..80] + "…" : subject);
+
+    private static string FromOf(MimeKit.MimeMessage m)
+    {
+        var a = m.From?.Mailboxes?.FirstOrDefault();
+        return a is null ? "(unbekannt)" : (string.IsNullOrEmpty(a.Name) ? a.Address : $"{a.Name} <{a.Address}>");
+    }
 }
