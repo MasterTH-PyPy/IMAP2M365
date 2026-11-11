@@ -23,6 +23,28 @@ public sealed class ExoRunner : IDisposable
         iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.RemoteSigned;
         _runspace = RunspaceFactory.CreateRunspace(iss);
         _runspace.Open();
+        AugmentModulePath();
+    }
+
+    /// <summary>
+    /// Die GUI (Explorer-Start) erbt oft ein PSModulePath ohne die PowerShell-7-Modulordner.
+    /// Hier die Standard-Modulpfade beider Editionen voranstellen, damit ein installiertes
+    /// ExchangeOnlineManagement sicher gefunden wird und die (fragile) Auto-Installation entfällt.
+    /// </summary>
+    private void AugmentModulePath()
+    {
+        using var ps = NewPs();
+        ps.AddScript(@"
+            $extra = @(
+                (Join-Path $env:USERPROFILE 'Documents\PowerShell\Modules')
+                (Join-Path $env:USERPROFILE 'Documents\WindowsPowerShell\Modules')
+                (Join-Path $env:ProgramFiles 'PowerShell\Modules')
+                (Join-Path $env:ProgramFiles 'PowerShell\7\Modules')
+                (Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules')
+            ) | Where-Object { Test-Path $_ }
+            $current = ($env:PSModulePath -split ';') | Where-Object { $_ }
+            $env:PSModulePath = (($extra + $current) | Select-Object -Unique) -join ';'");
+        ps.Invoke();
     }
 
     private PowerShell NewPs()
