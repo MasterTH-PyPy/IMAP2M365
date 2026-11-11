@@ -128,24 +128,57 @@ public sealed class MigrationTab : UserControl
                 _cts.Token.ThrowIfCancellationRequested();
                 SetState($"Postfach {++i}/{_config.Mailboxes.Count}: {row.TargetSmtp}");
 
-                // Vollmigration: Lizenz pro Postfach ziehen (idempotent). Leer -> Postfach überspringen.
-                if (!testMode && !_license.TryConsume(row.TargetSmtp))
+                // Vollmigration: früh prüfen, ob noch Kontingent frei ist (verbraucht wird erst nach Connect).
+                if (!testMode && !_license.IsConsumed(row.TargetSmtp) && _license.Remaining <= 0)
                 {
                     _log($"{row.TargetSmtp}: übersprungen – keine freie Lizenz mehr ({_license.ConsumedCount}/{_license.MaxAccounts} verbraucht).");
                     continue;
                 }
 
-                var host = row.SourceHostOverride ?? cfg.SourceHost;
+                var host = (row.SourceHostOverride ?? cfg.SourceHost ?? "").Trim();
                 var port = row.SourcePortOverride ?? cfg.SourcePort;
+                if (string.IsNullOrWhiteSpace(host))
+                {
+                    _log($"{row.TargetSmtp}: kein Quell-IMAP-Server gesetzt (zentrales Feld oder Override leer) – übersprungen.");
+                    continue;
+                }
+                if (string.IsNullOrWhiteSpace(row.SourceUser))
+                {
+                    _log($"{row.TargetSmtp}: kein Quell-User gesetzt – übersprungen.");
+                    continue;
+                }
 
+                // Quelle verbinden (mit 30-s-Timeout, damit es nicht ewig hängt)
                 await using var source = new ImapSource(host, port, cfg.SourceUseSsl, row.SourceUser, row.SourcePassword);
-                await source.ConnectAsync(_cts.Token);
+                _log($"Verbinde Quelle {host}:{port} (SSL={cfg.SourceUseSsl}) als {row.SourceUser} …");
+                try
+                {
+                    await source.ConnectAsync(WithTimeout(_cts.Token, 30));
+                }
+                catch (Exception ex) when (!_cts.IsCancellationRequested)
+                {
+                    _log($"{row.TargetSmtp}: Quell-IMAP {host}:{port} nicht erreichbar oder Login fehlgeschlagen – {ex.Message}");
+                    continue;
+                }
 
+                // Ziel verbinden
                 IMailTarget target = useGraph
                     ? new GraphTarget(cfg.TenantId, cfg.ClientId, cfg.ClientSecret)
                     : new ImapAppendTarget(tokens);
                 await using var _ = target;
-                await target.ConnectAsync(row.TargetSmtp, _cts.Token);
+                _log("Verbinde Ziel (Exchange Online) …");
+                try
+                {
+                    await target.ConnectAsync(row.TargetSmtp, WithTimeout(_cts.Token, 30));
+                }
+                catch (Exception ex) when (!_cts.IsCancellationRequested)
+                {
+                    _log($"{row.TargetSmtp}: Ziel (Exchange Online) nicht erreichbar oder Auth fehlgeschlagen – {ex.Message}");
+                    continue;
+                }
+
+                // Jetzt erst Lizenz ziehen (nach erfolgreichem Connect), idempotent.
+                if (!testMode) _license.TryConsume(row.TargetSmtp);
 
                 var engine = new MigrationEngine(
                     cfg,
@@ -167,6 +200,14 @@ public sealed class MigrationTab : UserControl
         catch (OperationCanceledException) { SetState("Abgebrochen."); _log("Migration abgebrochen."); }
         catch (Exception ex) { SetState("Fehler."); _log("Migration fehlgeschlagen: " + ex.Message); }
         finally { _start.Enabled = true; _cancel.Enabled = false; _cts?.Dispose(); _cts = null; }
+    }
+
+    /// <summary>Verknüpft den Abbruch-Token mit einem Timeout, damit Verbindungsversuche nicht ewig hängen.</summary>
+    private static CancellationToken WithTimeout(CancellationToken outer, int seconds)
+    {
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(outer);
+        cts.CancelAfter(TimeSpan.FromSeconds(seconds));
+        return cts.Token;
     }
 
     /// <summary>
