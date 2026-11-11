@@ -74,8 +74,13 @@ Postfach-Mapping-CSV-Pfad, Ordner-Ausschlüsse, Dry-Run-Flag.
   Nachrichten, die in der Quelle nicht mehr am selben Ort sind (verschoben/gelöscht), werden im
   Ziel in den Papierkorb verschoben. Ausdrückliche Bestätigung nötig.
 
-**Debug-Haken**: protokolliert den Betreff jeder kopierten Mail. Die Fortschrittsanzeige zeigt
-immer „Mailbox X/Y · Ordner A/B · Nachricht M/N".
+**Debug-Haken**: protokolliert den Betreff jeder kopierten Mail (bei Parallelität interleaved).
+
+**Parallelität**: 1–4 Postfächer gleichzeitig (Default 1, per Hoch/Runter). Jedes Postfach bleibt
+intern sequenziell; Lizenzverbrauch ist dabei thread-sicher. Die Statuszeile zeigt
+„Jobs aktiv: N/Limit · Postfächer X/Y · … kopiert" plus die aktuelle Detailposition. Hinweis:
+Exchange Online drosselt tenant-weit – mehr als 2–4 parallele Jobs bringen i. d. R. keinen
+Gewinn mehr und provozieren Throttling.
 
 ## Voraussetzungen
 
