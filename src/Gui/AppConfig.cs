@@ -52,6 +52,10 @@ public sealed class AppConfig
 /// <summary>Eine Zeile im Setup-Grid: Ziel aus EXO ausgelesen, Quelle vom Benutzer ergänzt.</summary>
 public sealed class MailboxRow
 {
+    // Aktiv? Deaktivierte Konten werden bei Einrichtung und Migration übersprungen.
+    // Default true -> alte Profile ohne dieses Feld bleiben aktiv (STJ überschreibt fehlende Felder nicht).
+    public bool Enabled { get; set; } = true;
+
     // Ziel (aus EXO)
     public string TargetSmtp { get; set; } = "";
     public string MailboxType { get; set; } = "UserMailbox"; // UserMailbox | SharedMailbox

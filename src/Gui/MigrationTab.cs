@@ -95,8 +95,8 @@ public sealed class MigrationTab : UserControl
                 _log("Keine gültige Lizenz - bitte im Reiter Lizenz aktivieren. (Testmodus bleibt nutzbar.)");
                 return;
             }
-            var needed = _config.Mailboxes.Count(m => !_license.IsConsumed(m.TargetSmtp));
-            _log($"Lizenz: {_license.Remaining} frei, {needed} neue Postfächer in dieser Migration.");
+            var needed = _config.Mailboxes.Count(m => m.Enabled && !_license.IsConsumed(m.TargetSmtp));
+            _log($"Lizenz: {_license.Remaining} frei, {needed} neue aktive Postfächer in dieser Migration.");
         }
 
         _cts = new CancellationTokenSource();
@@ -126,6 +126,9 @@ public sealed class MigrationTab : UserControl
             foreach (var row in _config.Mailboxes)
             {
                 _cts.Token.ThrowIfCancellationRequested();
+
+                if (!row.Enabled) { _log($"{row.TargetSmtp}: deaktiviert – übersprungen."); continue; }
+
                 SetState($"Postfach {++i}/{_config.Mailboxes.Count}: {row.TargetSmtp}");
 
                 // Vollmigration: früh prüfen, ob noch Kontingent frei ist (verbraucht wird erst nach Connect).

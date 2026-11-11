@@ -91,6 +91,7 @@ public sealed class SetupTab : UserControl
 
     private void BuildGridColumns()
     {
+        _grid.Columns.Add(new DataGridViewCheckBoxColumn { HeaderText = "Migrieren", DataPropertyName = "Enabled", FillWeight = 45 });
         _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Ziel-Postfach", DataPropertyName = "TargetSmtp", ReadOnly = true });
         _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Typ", DataPropertyName = "MailboxType", ReadOnly = true, FillWeight = 60 });
         _grid.Columns.Add(new DataGridViewCheckBoxColumn { HeaderText = "IMAP aktiv", DataPropertyName = "ImapEnabled", FillWeight = 55 });
@@ -256,6 +257,8 @@ public sealed class SetupTab : UserControl
 
         foreach (var row in _config.Mailboxes)
         {
+            if (!row.Enabled) { _log($"{row.TargetSmtp}: deaktiviert – übersprungen."); continue; }
+
             // IMAP aktivieren, wo nötig (betrifft oft Shared Mailboxes)
             if (!row.ImapEnabled)
             {
