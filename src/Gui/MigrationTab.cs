@@ -92,7 +92,7 @@ public sealed class MigrationTab : UserControl
         {
             if (!_license.HasValidLicense)
             {
-                _log("Keine gültige Lizenz – bitte im Reiter „Lizenz" aktivieren. (Testmodus bleibt nutzbar.)");
+                _log("Keine gültige Lizenz - bitte im Reiter Lizenz aktivieren. (Testmodus bleibt nutzbar.)");
                 return;
             }
             var needed = _config.Mailboxes.Count(m => !_license.IsConsumed(m.TargetSmtp));
