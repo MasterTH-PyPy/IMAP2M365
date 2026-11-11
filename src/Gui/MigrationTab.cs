@@ -44,7 +44,7 @@ public sealed class MigrationTab : UserControl
 
     private async Task RunAsync()
     {
-        if (_config.Mailboxes.Count == 0) { _log("Keine Postfächer – erst im Reiter „Einrichtung" laden."); return; }
+        if (_config.Mailboxes.Count == 0) { _log("Keine Postfächer - erst im Reiter Einrichtung laden."); return; }
         if (string.IsNullOrWhiteSpace(_config.ClientId)) { _log("Keine ClientId – erst Einrichtung ausführen."); return; }
 
         _cts = new CancellationTokenSource();
