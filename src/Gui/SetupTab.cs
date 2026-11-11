@@ -322,7 +322,10 @@ public sealed class SetupTab : UserControl
         }
 
         Rebind();
-        _log("Einrichtung abgeschlossen.");
+        if (dry)
+            _log("Dry-Run abgeschlossen – es wurde NICHTS geändert. Für die echte Einrichtung den Haken „Dry-Run" entfernen und erneut ausführen.");
+        else
+            _log("Einrichtung abgeschlossen (ServicePrincipal, IMAP, Rechte gesetzt).");
     }
 
     private string? PromptMissingSpObjectId()

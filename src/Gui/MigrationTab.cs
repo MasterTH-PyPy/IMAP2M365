@@ -177,6 +177,7 @@ public sealed class MigrationTab : UserControl
                 catch (Exception ex) when (!_cts.IsCancellationRequested)
                 {
                     _log($"{row.TargetSmtp}: Ziel (Exchange Online) nicht erreichbar oder Auth fehlgeschlagen – {ex.Message}");
+                    _log("  Prüfen: Einrichtung OHNE Dry-Run ausgeführt? IMAP am Postfach aktiv, ServicePrincipal registriert, FullAccess erteilt? (Änderungen können einige Minuten brauchen.)");
                     continue;
                 }
 
