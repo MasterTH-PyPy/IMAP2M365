@@ -18,8 +18,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- EXO-Cmdlets in-process: Microsoft.PowerShell.SDK + Modul ExchangeOnlineManagement (Laufzeit). -->
-    <PackageReference Include="Microsoft.PowerShell.SDK" Version="7.*" />
+    <!-- EXO-Cmdlets in-process: Microsoft.PowerShell.SDK + Modul ExchangeOnlineManagement (Laufzeit).
+         Konkrete Version (net9.0-Assets, von net10 konsumierbar) statt Wildcard – sonst wird
+         System.Management.Automation für net10.0-windows nicht referenziert. -->
+    <PackageReference Include="Microsoft.PowerShell.SDK" Version="7.5.0" />
 
     <!-- Entra-App-Provisionierung + Admin-Login: REST über HttpClient, Token via Azure.Identity.
          Bewusst KEIN Microsoft.Graph (zieht verwundbares Microsoft.Kiota.Abstractions nach, NU1903). -->
