@@ -9,7 +9,8 @@ namespace IMAP2M365.Gui;
 /// <summary>
 /// Legt die Entra-App-Registrierung für app-only XOAUTH2 an und erteilt Admin-Consent –
 /// über reines Graph-REST (HttpClient), ohne Microsoft.Graph/Kiota.
-/// Admin meldet sich einmal interaktiv per Device-Code an.
+/// Admin meldet sich einmal interaktiv im Browser an (Konto-Auswahl). Kein Device-Code,
+/// weil der in vielen Tenants per Conditional Access gesperrt ist (AADSTS530035).
 ///
 /// Benötigte delegierte Rechte des anmeldenden Admins:
 ///   Application.ReadWrite.All, AppRoleAssignment.ReadWrite.All.
@@ -39,12 +40,17 @@ public sealed class GraphProvisioner
 
     public Action<string>? Log { get; set; }
 
-    private TokenCredential Credential(string tenantId) => new DeviceCodeCredential(new DeviceCodeCredentialOptions
+    private TokenCredential Credential(string tenantId)
     {
-        TenantId = tenantId,
-        ClientId = "14d82eec-204b-4c2f-b7e8-296a70dab67e", // Microsoft Graph Command Line Tools (öffentlicher Client)
-        DeviceCodeCallback = (info, ct) => { Log?.Invoke(info.Message); return Task.CompletedTask; }
-    });
+        Log?.Invoke("Browser zur Anmeldung wird geöffnet – bitte Admin-Konto auswählen.");
+        return new InteractiveBrowserCredential(new InteractiveBrowserCredentialOptions
+        {
+            TenantId = tenantId,
+            ClientId = "14d82eec-204b-4c2f-b7e8-296a70dab67e", // Microsoft Graph Command Line Tools (öffentlicher Client)
+            RedirectUri = new Uri("http://localhost"),         // Auth-Code-Flow mit lokalem Redirect
+            LoginHint = null
+        });
+    }
 
     public async Task<(string appId, string spObjectId, string secret)> ProvisionAsync(
         string tenantId, string displayName, bool includeGraphTarget, CancellationToken ct)
