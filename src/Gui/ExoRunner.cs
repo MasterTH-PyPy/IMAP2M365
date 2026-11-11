@@ -55,33 +55,26 @@ public sealed class ExoRunner : IDisposable
             Log?.Invoke("Installiere Modul ExchangeOnlineManagement (CurrentUser) ...");
 
             using var install = NewPs();
-            // Komplett nicht-interaktiv: der In-Process-Host kann keine Ja/Nein-Prompts beantworten.
-            // Bevorzugt Install-PSResource (PS7, braucht keinen alten NuGet-Provider); sonst Fallback
-            // mit Provider-Bootstrap und getrustetem PSGallery.
+            // Nur der moderne PSResourceGet-Pfad (PS7): nicht-interaktiv, kein NuGet-Provider nötig.
+            // Der alte PowerShellGet/Install-Module-Pfad wird bewusst NICHT genutzt – im gehosteten
+            // Runspace greift er auf PowerShellGet 1.0.0.1 (WinPS 5.1) zu und erzeugt Clobber-Fehler.
             install.AddScript(@"
                 $ErrorActionPreference = 'Stop'
                 $ConfirmPreference = 'None'
                 try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch {}
-
-                if (Get-Command Install-PSResource -ErrorAction SilentlyContinue) {
-                    Install-PSResource -Name ExchangeOnlineManagement -Scope CurrentUser -TrustRepository -Quiet -Reinstall:$false
-                } else {
-                    if (-not (Get-PackageProvider -ListAvailable -Name NuGet -ErrorAction SilentlyContinue)) {
-                        Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -ForceBootstrap -Scope CurrentUser | Out-Null
-                    }
-                    if ((Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue).InstallationPolicy -ne 'Trusted') {
-                        Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
-                    }
-                    Install-Module ExchangeOnlineManagement -Scope CurrentUser -Force -AllowClobber -Confirm:$false
-                }");
+                Import-Module Microsoft.PowerShell.PSResourceGet -ErrorAction SilentlyContinue
+                if (-not (Get-Command Install-PSResource -ErrorAction SilentlyContinue)) {
+                    throw 'PSResourceGet im Host nicht verfügbar'
+                }
+                Install-PSResource -Name ExchangeOnlineManagement -Scope CurrentUser -TrustRepository -Quiet");
             install.Invoke();
             if (install.HadErrors)
             {
                 var msg = string.Join("; ", install.Streams.Error.Select(e => e.ToString()));
                 throw new InvalidOperationException(
-                    "Automatische Installation fehlgeschlagen (" + msg + "). " +
-                    "Bitte einmalig manuell in einer PowerShell ausführen: " +
-                    "Install-Module ExchangeOnlineManagement -Scope CurrentUser -Force");
+                    "Automatische Installation nicht möglich (" + msg + "). " +
+                    "Bitte das Modul einmalig in einer normalen PowerShell installieren und das Tool danach neu verbinden:\r\n" +
+                    "    Install-Module ExchangeOnlineManagement -Scope CurrentUser -Force -AllowClobber");
             }
         }
         using var import = NewPs();

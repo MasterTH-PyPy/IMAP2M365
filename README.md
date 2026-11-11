@@ -45,6 +45,15 @@ Siehe `prep/Register-ExchangeServicePrincipal.ps1`:
 `config.enc` → TenantId, ClientId, ClientSecret, Quell-IMAP-Defaults,
 Postfach-Mapping-CSV-Pfad, Ordner-Ausschlüsse, Dry-Run-Flag.
 
+## Voraussetzungen
+
+- Windows mit PowerShell 7 (für den EXO-Teil) und dem Modul
+  `ExchangeOnlineManagement`. Das Tool versucht die Installation automatisch
+  über `Install-PSResource`; klappt das im Host nicht, einmalig manuell:
+  `Install-Module ExchangeOnlineManagement -Scope CurrentUser -Force -AllowClobber`.
+- Für Schritt 1 (App anlegen): Anmeldung als Global Admin oder Cloud Application
+  Administrator. Der Login läuft interaktiv im Browser (kein Device-Code).
+
 ## Einrichtungs-Wizard (GUI-Reiter „Einrichtung")
 
 Die komplette M365-Vorarbeit steckt im Tool – kein manuelles PowerShell mehr nötig:
