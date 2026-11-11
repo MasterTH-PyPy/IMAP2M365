@@ -23,9 +23,11 @@ public sealed class GraphProvisioner
     private const string ExchangeOnlineResourceAppId = "00000002-0000-0ff1-ce00-000000000000"; // Office 365 Exchange Online
     private const string GraphResourceAppId          = "00000003-0000-0000-c000-000000000000"; // Microsoft Graph
 
-    // AppRole-IDs
-    private const string ImapAccessAsApp = "a4b8392a-d8d1-4954-a029-8e668a39a170"; // Office365 EXO: IMAP.AccessAsApp (App)
-    private const string MailReadWrite   = "e2a3a72e-5f79-4c64-b1b1-878b674786c9"; // Graph: Mail.ReadWrite (App)
+    // AppRole-Namen (value) – die IDs werden dynamisch aus dem Ressourcen-ServicePrincipal
+    // nachgeschlagen, weil hart kodierte GUIDs je nach Tenant/Zeitpunkt nicht passen
+    // ("Permission being assigned was not found on application").
+    private const string ImapAccessAsAppRole = "IMAP.AccessAsApp"; // Office 365 Exchange Online
+    private const string MailReadWriteRole   = "Mail.ReadWrite";   // Microsoft Graph
 
     // Delegated-Scopes, die der anmeldende Admin für die Provisionierung braucht.
     // Explizit anfordern (nicht ".default") -> löst beim ersten Login den Consent-Dialog aus.
@@ -64,20 +66,26 @@ public sealed class GraphProvisioner
     {
         var cred = Credential(tenantId);
 
-        // 1) App-Registrierung mit requiredResourceAccess
+        // Rollen-IDs dynamisch aus den Ressourcen-ServicePrincipals auflösen (keine GUID-Rate-rei).
+        var exo = await ResolveRoleAsync(cred, ExchangeOnlineResourceAppId, ImapAccessAsAppRole, ct).ConfigureAwait(false);
+        (string SpId, string RoleId)? graph = includeGraphTarget
+            ? await ResolveRoleAsync(cred, GraphResourceAppId, MailReadWriteRole, ct).ConfigureAwait(false)
+            : null;
+
+        // 1) App-Registrierung mit requiredResourceAccess (aufgelöste Rollen-IDs)
         var resourceAccess = new List<object>
         {
             new
             {
                 resourceAppId = ExchangeOnlineResourceAppId,
-                resourceAccess = new[] { new { id = ImapAccessAsApp, type = "Role" } }
+                resourceAccess = new[] { new { id = exo.RoleId, type = "Role" } }
             }
         };
-        if (includeGraphTarget)
+        if (graph is not null)
             resourceAccess.Add(new
             {
                 resourceAppId = GraphResourceAppId,
-                resourceAccess = new[] { new { id = MailReadWrite, type = "Role" } }
+                resourceAccess = new[] { new { id = graph.Value.RoleId, type = "Role" } }
             });
 
         var appJson = await PostAsync(cred, "/applications", new
@@ -102,10 +110,10 @@ public sealed class GraphProvisioner
         // 3) ServicePrincipal zur App (kurz retrien, App-Propagation abwarten)
         string spObjectId = await CreateServicePrincipalAsync(cred, appId, ct).ConfigureAwait(false);
 
-        // 4) Admin-Consent = appRoleAssignment je Ressource
-        await GrantConsentAsync(cred, spObjectId, ExchangeOnlineResourceAppId, ImapAccessAsApp, ct).ConfigureAwait(false);
-        if (includeGraphTarget)
-            await GrantConsentAsync(cred, spObjectId, GraphResourceAppId, MailReadWrite, ct).ConfigureAwait(false);
+        // 4) Admin-Consent = appRoleAssignment je Ressource (aufgelöste SP-/Rollen-IDs)
+        await AssignAppRoleAsync(cred, spObjectId, exo.SpId, exo.RoleId, ct).ConfigureAwait(false);
+        if (graph is not null)
+            await AssignAppRoleAsync(cred, spObjectId, graph.Value.SpId, graph.Value.RoleId, ct).ConfigureAwait(false);
 
         Log?.Invoke("Admin-Consent erteilt.");
         return (appId, spObjectId, secret);
@@ -151,21 +159,62 @@ public sealed class GraphProvisioner
             ? spArr[0].GetProperty("id").GetString()!
             : await CreateServicePrincipalAsync(cred, appId, ct).ConfigureAwait(false);
 
-        await TryGrantConsentAsync(cred, spObjectId, ExchangeOnlineResourceAppId, ImapAccessAsApp, ct).ConfigureAwait(false);
+        await TryAssignRoleAsync(cred, spObjectId, ExchangeOnlineResourceAppId, ImapAccessAsAppRole, ct).ConfigureAwait(false);
         if (includeGraphTarget)
-            await TryGrantConsentAsync(cred, spObjectId, GraphResourceAppId, MailReadWrite, ct).ConfigureAwait(false);
+            await TryAssignRoleAsync(cred, spObjectId, GraphResourceAppId, MailReadWriteRole, ct).ConfigureAwait(false);
 
         return (spObjectId, secret);
     }
 
-    private async Task TryGrantConsentAsync(
-        TokenCredential cred, string clientSpId, string resourceAppId, string appRoleId, CancellationToken ct)
+    private async Task TryAssignRoleAsync(
+        TokenCredential cred, string clientSpId, string resourceAppId, string roleValue, CancellationToken ct)
     {
-        try { await GrantConsentAsync(cred, clientSpId, resourceAppId, appRoleId, ct).ConfigureAwait(false); }
-        catch (HttpRequestException ex) when (ex.Message.Contains("already", StringComparison.OrdinalIgnoreCase))
+        try
+        {
+            var (spId, roleId) = await ResolveRoleAsync(cred, resourceAppId, roleValue, ct).ConfigureAwait(false);
+            await AssignAppRoleAsync(cred, clientSpId, spId, roleId, ct).ConfigureAwait(false);
+        }
+        catch (HttpRequestException ex) when (ex.Message.Contains("already", StringComparison.OrdinalIgnoreCase)
+                                              || ex.Message.Contains("Permission being assigned already exists", StringComparison.OrdinalIgnoreCase))
         {
             // appRoleAssignment existiert bereits -> ok
         }
+    }
+
+    /// <summary>Findet (ServicePrincipal-Id, AppRole-Id) einer Ressource anhand des Rollennamens (value).</summary>
+    private async Task<(string SpId, string RoleId)> ResolveRoleAsync(
+        TokenCredential cred, string resourceAppId, string roleValue, CancellationToken ct)
+    {
+        var res = await GetAsync(cred, $"/servicePrincipals?$filter=appId eq '{resourceAppId}'&$select=id,appRoles&$top=1", ct)
+            .ConfigureAwait(false);
+        var arr = res.GetProperty("value");
+        if (arr.GetArrayLength() == 0)
+            throw new InvalidOperationException($"Ressourcen-ServicePrincipal {resourceAppId} nicht gefunden (Ressource im Tenant nicht vorhanden?).");
+
+        var sp = arr[0];
+        var spId = sp.GetProperty("id").GetString()!;
+        foreach (var role in sp.GetProperty("appRoles").EnumerateArray())
+        {
+            if (string.Equals(role.GetProperty("value").GetString(), roleValue, StringComparison.OrdinalIgnoreCase))
+            {
+                var allowsApp = role.GetProperty("allowedMemberTypes").EnumerateArray()
+                    .Any(t => string.Equals(t.GetString(), "Application", StringComparison.OrdinalIgnoreCase));
+                if (allowsApp)
+                    return (spId, role.GetProperty("id").GetString()!);
+            }
+        }
+        throw new InvalidOperationException($"App-Rolle '{roleValue}' an Ressource {resourceAppId} nicht gefunden.");
+    }
+
+    private async Task AssignAppRoleAsync(
+        TokenCredential cred, string clientSpId, string resourceSpId, string appRoleId, CancellationToken ct)
+    {
+        await PostAsync(cred, $"/servicePrincipals/{clientSpId}/appRoleAssignments", new
+        {
+            principalId = clientSpId,
+            resourceId = resourceSpId,
+            appRoleId
+        }, ct).ConfigureAwait(false);
     }
 
     private async Task<string> CreateServicePrincipalAsync(TokenCredential cred, string appId, CancellationToken ct)
@@ -182,24 +231,6 @@ public sealed class GraphProvisioner
                 await Task.Delay(TimeSpan.FromSeconds(5), ct).ConfigureAwait(false); // App noch nicht propagiert
             }
         }
-    }
-
-    private async Task GrantConsentAsync(
-        TokenCredential cred, string clientSpId, string resourceAppId, string appRoleId, CancellationToken ct)
-    {
-        var res = await GetAsync(cred, $"/servicePrincipals?$filter=appId eq '{resourceAppId}'&$select=id&$top=1", ct)
-            .ConfigureAwait(false);
-        var arr = res.GetProperty("value");
-        if (arr.GetArrayLength() == 0)
-            throw new InvalidOperationException($"Ressourcen-ServicePrincipal {resourceAppId} nicht gefunden.");
-        var resourceId = arr[0].GetProperty("id").GetString()!;
-
-        await PostAsync(cred, $"/servicePrincipals/{clientSpId}/appRoleAssignments", new
-        {
-            principalId = clientSpId,
-            resourceId,
-            appRoleId
-        }, ct).ConfigureAwait(false);
     }
 
     // --- REST-Helfer ---
