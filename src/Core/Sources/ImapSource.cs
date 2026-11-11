@@ -77,6 +77,13 @@ public sealed class ImapSource : IMailSource
         return new FolderInfo(f.FullName, segments);
     }
 
+    public async Task<int> GetMessageCountAsync(FolderInfo folder, CancellationToken ct)
+    {
+        var mf = await _client.GetFolderAsync(folder.FullName, ct).ConfigureAwait(false);
+        if (!mf.IsOpen) await mf.OpenAsync(FolderAccess.ReadOnly, ct).ConfigureAwait(false);
+        return mf.Count;
+    }
+
     public async IAsyncEnumerable<SourceMessage> ReadFolderAsync(
         FolderInfo folder, [EnumeratorCancellation] CancellationToken ct)
     {

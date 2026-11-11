@@ -17,11 +17,17 @@ public sealed record SourceMessage(
 
 public sealed record FolderInfo(string FullName, IReadOnlyList<string> PathSegments);
 
+/// <summary>Eine im Ziel vorhandene Nachricht: Message-Id (für Abgleich) + Lösch-Handle (UID bzw. Graph-Id).</summary>
+public sealed record TargetMessage(string MessageId, string DeleteHandle);
+
 /// <summary>Quelle: beliebiger IMAP-Server (Basic- oder XOAUTH2-Login).</summary>
 public interface IMailSource : IAsyncDisposable
 {
     Task ConnectAsync(CancellationToken ct);
     Task<IReadOnlyList<FolderInfo>> ListFoldersAsync(CancellationToken ct);
+
+    /// <summary>Anzahl Nachrichten eines Ordners (für die Fortschrittsanzeige „M/N").</summary>
+    Task<int> GetMessageCountAsync(FolderInfo folder, CancellationToken ct);
 
     /// <summary>Liefert Nachrichten eines Ordners gestreamt (schont Speicher bei großen Postfächern).</summary>
     IAsyncEnumerable<SourceMessage> ReadFolderAsync(FolderInfo folder, CancellationToken ct);
@@ -39,6 +45,12 @@ public interface IMailTarget : IAsyncDisposable
     Task<bool> ExistsAsync(string folderHandle, string messageId, CancellationToken ct);
 
     Task AppendAsync(string folderHandle, SourceMessage message, CancellationToken ct);
+
+    /// <summary>Listet die Nachrichten eines Zielordners (für den Spiegelabgleich).</summary>
+    IAsyncEnumerable<TargetMessage> ListAsync(string folderHandle, CancellationToken ct);
+
+    /// <summary>Löscht eine Nachricht im Ziel (verschiebt sie in den Papierkorb/Gelöschte Elemente).</summary>
+    Task DeleteAsync(string folderHandle, string deleteHandle, CancellationToken ct);
 }
 
 /// <summary>Liefert app-only Access-Token für den angefragten Resource-Scope.</summary>
@@ -65,6 +77,10 @@ public sealed class MigrationConfig
     public bool DryRun { get; init; } = true;
     /// <summary>Testmodus: nach so vielen kopierten Nachrichten pro Postfach abbrechen (0 = unbegrenzt).</summary>
     public int TestMessageLimit { get; init; } = 0;
+    /// <summary>Spiegelabgleich: Ziel an Quelle angleichen (im Ziel Überzähliges löschen).</summary>
+    public bool Mirror { get; init; } = false;
+    /// <summary>Debug: Betreff jeder kopierten Nachricht protokollieren.</summary>
+    public bool Debug { get; init; } = false;
     public IReadOnlyList<string> ExcludedFolders { get; init; } = new[] { "Junk", "Trash", "Deleted Items" };
     public TargetKind Target { get; init; } = TargetKind.ImapAppend;
 }

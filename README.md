@@ -64,6 +64,19 @@ Postfach-Mapping-CSV-Pfad, Ordner-Ausschlüsse, Dry-Run-Flag.
 - **Produktivschlüssel**: im Generator `[1] Schlüsselpaar erzeugen`, `public.pem` in
   `EmbeddedPublicKey.cs` eintragen, `private.pem` geheim halten.
 
+## Migrationsmodi
+
+- **Testmodus**: kopiert pro Postfach die ersten 10 Mails und bricht ab; keine Lizenz nötig,
+  kein Verbrauch. Zum Prüfen der Kette.
+- **Erstmigration**: voll, additiv. Dedup pro Zielordner über `Message-Id` (idempotent).
+  Verbraucht pro Postfach eine Lizenz.
+- **Spiegelabgleich**: wie Erstmigration, zusätzlich wird das Ziel an die Quelle angeglichen –
+  Nachrichten, die in der Quelle nicht mehr am selben Ort sind (verschoben/gelöscht), werden im
+  Ziel in den Papierkorb verschoben. Ausdrückliche Bestätigung nötig.
+
+**Debug-Haken**: protokolliert den Betreff jeder kopierten Mail. Die Fortschrittsanzeige zeigt
+immer „Mailbox X/Y · Ordner A/B · Nachricht M/N".
+
 ## Voraussetzungen
 
 - Windows mit PowerShell 7 (für den EXO-Teil) und dem Modul

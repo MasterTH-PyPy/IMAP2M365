@@ -33,11 +33,15 @@ public sealed class MigrationTab : UserControl
 
     private readonly Button _start = ActionButton("Migration starten");
     private readonly Button _cancel = ActionButton("Abbrechen", enabled: false);
-    private readonly CheckBox _testMode = new() { Text = $"Testmodus (erste {TestMessageLimit} Mails)", Checked = true, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(12, 4, 4, 4) };
+    private readonly Label _modeLabel = new() { Text = "Modus:", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(12, 4, 2, 4) };
+    private readonly ComboBox _mode = new() { Width = 260, DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left, Margin = new Padding(4) };
+    private readonly CheckBox _debug = new() { Text = "Debug (Betreffs zeigen)", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(12, 4, 4, 4) };
     private readonly Label _backendLabel = new() { Text = "Ziel-Backend:", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(16, 4, 2, 4) };
     private readonly ComboBox _backend = new() { Width = 180, DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left, Margin = new Padding(4) };
     private readonly ProgressBar _bar = new() { Dock = DockStyle.Top, Height = 22 };
     private readonly Label _state = new() { Dock = DockStyle.Top, Height = 22, Text = "Bereit." };
+
+    private const int ModeTest = 0, ModeInitial = 1, ModeMirror = 2;
 
     private CancellationTokenSource? _cts;
 
@@ -48,17 +52,21 @@ public sealed class MigrationTab : UserControl
         _license = license;
         _onLicenseChanged = onLicenseChanged;
 
+        _mode.Items.AddRange(new object[] { $"Testmodus (erste {TestMessageLimit} Mails)", "Erstmigration (voll)", "Spiegelabgleich" });
+        _mode.SelectedIndex = ModeTest;
         _backend.Items.AddRange(new object[] { "IMAP-APPEND (XOAUTH2)", "Microsoft Graph" });
         _backend.SelectedIndex = _config.TargetKind.Equals("Graph", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
 
-        // TableLayoutPanel richtet alle Elemente (Buttons/Checkbox/Label/Combo) vertikal zentriert aus.
-        var buttons = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Height = 46, ColumnCount = 5, RowCount = 1, Padding = new Padding(8, 4, 8, 4) };
-        for (int i = 0; i < 5; i++) buttons.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        // TableLayoutPanel richtet alle Elemente (Buttons/Combos/Checkbox) vertikal zentriert aus.
+        var buttons = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Height = 46, ColumnCount = 7, RowCount = 1, Padding = new Padding(8, 4, 8, 4) };
+        for (int i = 0; i < 7; i++) buttons.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         buttons.Controls.Add(_start, 0, 0);
         buttons.Controls.Add(_cancel, 1, 0);
-        buttons.Controls.Add(_testMode, 2, 0);
-        buttons.Controls.Add(_backendLabel, 3, 0);
-        buttons.Controls.Add(_backend, 4, 0);
+        buttons.Controls.Add(_modeLabel, 2, 0);
+        buttons.Controls.Add(_mode, 3, 0);
+        buttons.Controls.Add(_debug, 4, 0);
+        buttons.Controls.Add(_backendLabel, 5, 0);
+        buttons.Controls.Add(_backend, 6, 0);
 
         Controls.Add(_state);
         Controls.Add(_bar);
@@ -85,18 +93,30 @@ public sealed class MigrationTab : UserControl
         if (_config.Mailboxes.Count == 0) { _log("Keine Postfächer - erst im Reiter Einrichtung laden."); return; }
         if (string.IsNullOrWhiteSpace(_config.ClientId)) { _log("Keine ClientId – erst Einrichtung ausführen."); return; }
 
-        var testMode = _testMode.Checked;
+        var mode = _mode.SelectedIndex;
+        var testMode = mode == ModeTest;
+        var mirror = mode == ModeMirror;
 
-        // Ohne gültige Lizenz läuft gar nichts – auch der Testmodus nicht (er verbraucht nur nichts).
-        if (!_license.HasValidLicense)
-        {
-            _log("Keine gültige Lizenz - bitte im Reiter Lizenz aktivieren.");
-            return;
-        }
+        // Testmodus ist frei. Erstmigration/Spiegel brauchen eine gültige Lizenz.
         if (!testMode)
         {
+            if (!_license.HasValidLicense)
+            {
+                _log("Keine gültige Lizenz - bitte im Reiter Lizenz aktivieren. (Testmodus bleibt frei nutzbar.)");
+                return;
+            }
             var needed = _config.Mailboxes.Count(m => m.Enabled && !_license.IsConsumed(m.TargetSmtp));
             _log($"Lizenz: {_license.Remaining} frei, {needed} neue aktive Postfächer in dieser Migration.");
+        }
+
+        // Spiegelabgleich löscht im Ziel -> ausdrücklich bestätigen.
+        if (mirror)
+        {
+            var ok = MessageBox.Show(
+                "Spiegelabgleich gleicht das Ziel an die Quelle an und VERSCHIEBT im Ziel Nachrichten in den " +
+                "Papierkorb, die in der Quelle nicht mehr am selben Ort sind (verschoben/gelöscht). Fortfahren?",
+                "Spiegelabgleich", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning);
+            if (ok != DialogResult.OK) return;
         }
 
         _cts = new CancellationTokenSource();
@@ -112,16 +132,20 @@ public sealed class MigrationTab : UserControl
             SourcePort = _config.SourcePort,
             SourceUseSsl = _config.SourceUseSsl,
             TestMessageLimit = testMode ? TestMessageLimit : 0,
+            Mirror = mirror,
+            Debug = _debug.Checked,
             ExcludedFolders = _config.ExcludedFolders,
             Target = useGraph ? TargetKind.Graph : TargetKind.ImapAppend
         };
 
         // Token-Provider nur für das IMAP-Backend nötig; GraphTarget baut eigene Credentials.
         var tokens = new ExchangeOnlineTokenProvider(cfg.TenantId, cfg.ClientId, cfg.ClientSecret);
-        _log($"Ziel-Backend: {(useGraph ? "Microsoft Graph" : "IMAP-APPEND (XOAUTH2)")}" + (testMode ? " · Testmodus" : " · Vollmigration"));
+        var modeName = testMode ? "Testmodus" : mirror ? "Spiegelabgleich" : "Erstmigration";
+        _log($"Ziel-Backend: {(useGraph ? "Microsoft Graph" : "IMAP-APPEND (XOAUTH2)")} · {modeName}");
 
         try
         {
+            var activeTotal = _config.Mailboxes.Count(m => m.Enabled);
             int i = 0;
             foreach (var row in _config.Mailboxes)
             {
@@ -129,7 +153,8 @@ public sealed class MigrationTab : UserControl
 
                 if (!row.Enabled) { _log($"{row.TargetSmtp}: deaktiviert – übersprungen."); continue; }
 
-                SetState($"Postfach {++i}/{_config.Mailboxes.Count}: {row.TargetSmtp}");
+                i++;
+                SetState($"Mailbox {i}/{activeTotal}: {row.TargetSmtp}");
 
                 // Vollmigration: früh prüfen, ob noch Kontingent frei ist (verbraucht wird erst nach Connect).
                 if (!testMode && !_license.IsConsumed(row.TargetSmtp) && _license.Remaining <= 0)
@@ -190,13 +215,14 @@ public sealed class MigrationTab : UserControl
                     progress: new Progress<MigrationProgress>(p =>
                     {
                         _bar.Style = ProgressBarStyle.Continuous;
-                        if (p.FolderTotal > 0) { _bar.Maximum = p.FolderTotal; _bar.Value = Math.Min(p.FolderDone, p.FolderTotal); }
-                        SetState($"{p.Mailbox} · {p.Folder} · {p.MessagesCopied} kopiert, {p.MessagesSkipped} übersprungen");
+                        if (p.MessageTotal > 0) { _bar.Maximum = p.MessageTotal; _bar.Value = Math.Min(p.MessageIndex, p.MessageTotal); }
+                        SetState($"Mailbox {p.MailboxIndex}/{p.MailboxTotal} · Ordner {p.FolderIndex}/{p.FolderTotal} · " +
+                                 $"Nachricht {p.MessageIndex}/{p.MessageTotal} · {p.MessagesCopied} kopiert");
                     }),
                     log: _log);
 
-                var (copied, skipped) = await engine.RunAsync(row.TargetSmtp, source, target, _cts.Token);
-                _log($"{row.TargetSmtp}: {copied} kopiert, {skipped} übersprungen{(testMode ? " (Testmodus)" : "")}");
+                var (copied, skipped) = await engine.RunAsync(row.TargetSmtp, source, target, _cts.Token, i, activeTotal);
+                _log($"{row.TargetSmtp}: {copied} kopiert, {skipped} übersprungen" + (testMode ? " (Testmodus)" : mirror ? " (Spiegel)" : ""));
                 _onLicenseChanged();
             }
             SetState("Fertig.");

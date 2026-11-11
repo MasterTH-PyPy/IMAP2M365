@@ -288,6 +288,43 @@ public sealed class GraphTarget : IMailTarget
     private static object? ToRecipient(MimeKit.MailboxAddress? a)
         => a is null ? null : new { emailAddress = new { address = a.Address, name = a.Name ?? a.Address } };
 
+    public async IAsyncEnumerable<TargetMessage> ListAsync(
+        string folderHandle, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        var url = $"{Base}/users/{_userId}/mailFolders/{folderHandle}/messages?$select=id,internetMessageId&$top=200";
+        while (!string.IsNullOrEmpty(url))
+        {
+            var page = new List<TargetMessage>();
+            string next;
+
+            using (var resp = await SendAsync(() => new HttpRequestMessage(HttpMethod.Get, url), ct).ConfigureAwait(false))
+            {
+                resp.EnsureSuccessStatusCode();
+                var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                using var doc = JsonDocument.Parse(body);
+                foreach (var m in doc.RootElement.GetProperty("value").EnumerateArray())
+                {
+                    var id = m.GetProperty("id").GetString() ?? "";
+                    var mid = m.TryGetProperty("internetMessageId", out var x) ? x.GetString() ?? "" : "";
+                    page.Add(new TargetMessage(mid, id));
+                }
+                next = doc.RootElement.TryGetProperty("@odata.nextLink", out var nl) ? nl.GetString() ?? "" : "";
+            }
+
+            foreach (var tm in page) yield return tm;
+            url = next;
+        }
+    }
+
+    public async Task DeleteAsync(string folderHandle, string deleteHandle, CancellationToken ct)
+    {
+        // DELETE auf eine Nachricht verschiebt sie nach „Gelöschte Elemente" (wiederherstellbar).
+        using var resp = await SendAsync(() => new HttpRequestMessage(
+            HttpMethod.Delete, $"{Base}/users/{_userId}/messages/{deleteHandle}"), ct).ConfigureAwait(false);
+        if (!resp.IsSuccessStatusCode && resp.StatusCode != HttpStatusCode.NoContent)
+            resp.EnsureSuccessStatusCode();
+    }
+
     public ValueTask DisposeAsync()
     {
         _http.Dispose();

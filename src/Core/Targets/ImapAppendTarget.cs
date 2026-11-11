@@ -87,6 +87,44 @@ public sealed class ImapAppendTarget : IMailTarget
         await folder.AppendAsync(message.Mime, flags, message.InternalDate, ct).ConfigureAwait(false);
     }
 
+    public async IAsyncEnumerable<TargetMessage> ListAsync(
+        string folderHandle, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        var folder = await _client.GetFolderAsync(folderHandle, ct).ConfigureAwait(false);
+        await folder.OpenAsync(FolderAccess.ReadOnly, ct).ConfigureAwait(false);
+
+        var uids = await folder.SearchAsync(MailKit.Search.SearchQuery.All, ct).ConfigureAwait(false);
+        if (uids.Count == 0) yield break;
+
+        var summaries = await folder.FetchAsync(uids, MessageSummaryItems.UniqueId | MessageSummaryItems.Envelope, ct)
+            .ConfigureAwait(false);
+        foreach (var s in summaries)
+            yield return new TargetMessage(s.Envelope?.MessageId ?? "", s.UniqueId.Id.ToString());
+    }
+
+    public async Task DeleteAsync(string folderHandle, string deleteHandle, CancellationToken ct)
+    {
+        var folder = await _client.GetFolderAsync(folderHandle, ct).ConfigureAwait(false);
+        if (!folder.IsOpen || folder.Access != FolderAccess.ReadWrite)
+            await folder.OpenAsync(FolderAccess.ReadWrite, ct).ConfigureAwait(false);
+
+        var uid = new UniqueId(uint.Parse(deleteHandle));
+
+        // Wenn möglich in den Papierkorb verschieben (wiederherstellbar), sonst endgültig löschen.
+        IMailFolder? trash = null;
+        try { trash = _client.GetFolder(SpecialFolder.Trash); } catch { /* kein SPECIAL-USE */ }
+
+        if (trash is not null)
+        {
+            await folder.MoveToAsync(uid, trash, ct).ConfigureAwait(false);
+        }
+        else
+        {
+            await folder.AddFlagsAsync(uid, MessageFlags.Deleted, true, ct).ConfigureAwait(false);
+            await folder.ExpungeAsync(ct).ConfigureAwait(false);
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (_client.IsConnected)
