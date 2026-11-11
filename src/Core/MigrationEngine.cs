@@ -138,5 +138,4 @@ public sealed class MigrationEngine
 
     private static string Trim(string? subject) =>
         string.IsNullOrEmpty(subject) ? "(kein Betreff)" : (subject.Length > 80 ? subject[..80] + "…" : subject);
-    }
 }
