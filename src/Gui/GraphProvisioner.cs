@@ -1,18 +1,23 @@
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
+using Azure.Core;
 using Azure.Identity;
-using Microsoft.Graph;
-using Microsoft.Graph.Models;
 
 namespace IMAP2M365.Gui;
 
 /// <summary>
-/// Legt die Entra-App-Registrierung für app-only XOAUTH2 an und erteilt Admin-Consent.
-/// Admin meldet sich interaktiv per Device-Code an (einmalig) – danach läuft alles über Graph.
+/// Legt die Entra-App-Registrierung für app-only XOAUTH2 an und erteilt Admin-Consent –
+/// über reines Graph-REST (HttpClient), ohne Microsoft.Graph/Kiota.
+/// Admin meldet sich einmal interaktiv per Device-Code an.
 ///
 /// Benötigte delegierte Rechte des anmeldenden Admins:
-///   Application.ReadWrite.All, AppRoleAssignment.ReadWrite.All (Global Admin / Cloud App Admin hat sie).
+///   Application.ReadWrite.All, AppRoleAssignment.ReadWrite.All.
 /// </summary>
 public sealed class GraphProvisioner
 {
+    private const string Base = "https://graph.microsoft.com/v1.0";
+
     // Ressourcen-AppIds (konstant in jedem Tenant)
     private const string ExchangeOnlineResourceAppId = "00000002-0000-0ff1-ce00-000000000000"; // Office 365 Exchange Online
     private const string GraphResourceAppId          = "00000003-0000-0000-c000-000000000000"; // Microsoft Graph
@@ -21,95 +26,134 @@ public sealed class GraphProvisioner
     private const string ImapAccessAsApp = "a4b8392a-d8d1-4954-a029-8e668a39a170"; // Office365 EXO: IMAP.AccessAsApp (App)
     private const string MailReadWrite   = "e2a3a72e-5f79-4c64-b1b1-878b674786c9"; // Graph: Mail.ReadWrite (App)
 
+    private readonly HttpClient _http = new();
+
     public Action<string>? Log { get; set; }
 
-    private GraphServiceClient Client(string tenantId)
+    private TokenCredential Credential(string tenantId) => new DeviceCodeCredential(new DeviceCodeCredentialOptions
     {
-        var cred = new DeviceCodeCredential(new DeviceCodeCredentialOptions
-        {
-            TenantId = tenantId,
-            ClientId = "14d82eec-204b-4c2f-b7e8-296a70dab67e", // Microsoft Graph PowerShell (öffentlicher Client)
-            DeviceCodeCallback = (info, ct) => { Log?.Invoke(info.Message); return Task.CompletedTask; }
-        });
-        return new GraphServiceClient(cred, new[] { "https://graph.microsoft.com/.default" });
-    }
+        TenantId = tenantId,
+        ClientId = "14d82eec-204b-4c2f-b7e8-296a70dab67e", // Microsoft Graph Command Line Tools (öffentlicher Client)
+        DeviceCodeCallback = (info, ct) => { Log?.Invoke(info.Message); return Task.CompletedTask; }
+    });
 
-    /// <summary>
-    /// Erstellt App + ServicePrincipal, setzt die benötigten Application-Permissions,
-    /// erzeugt ein Client-Secret und erteilt Admin-Consent (appRoleAssignment).
-    /// Gibt (AppId, ObjectId des ServicePrincipals, Secret) zurück – wandert in config.enc.
-    /// </summary>
     public async Task<(string appId, string spObjectId, string secret)> ProvisionAsync(
         string tenantId, string displayName, bool includeGraphTarget, CancellationToken ct)
     {
-        var graph = Client(tenantId);
+        var cred = Credential(tenantId);
 
         // 1) App-Registrierung mit requiredResourceAccess
-        var resources = new List<RequiredResourceAccess>
+        var resourceAccess = new List<object>
         {
-            new()
+            new
             {
-                ResourceAppId = ExchangeOnlineResourceAppId,
-                ResourceAccess = new() { new() { Id = Guid.Parse(ImapAccessAsApp), Type = "Role" } }
+                resourceAppId = ExchangeOnlineResourceAppId,
+                resourceAccess = new[] { new { id = ImapAccessAsApp, type = "Role" } }
             }
         };
         if (includeGraphTarget)
-            resources.Add(new()
+            resourceAccess.Add(new
             {
-                ResourceAppId = GraphResourceAppId,
-                ResourceAccess = new() { new() { Id = Guid.Parse(MailReadWrite), Type = "Role" } }
+                resourceAppId = GraphResourceAppId,
+                resourceAccess = new[] { new { id = MailReadWrite, type = "Role" } }
             });
 
-        var app = await graph.Applications.PostAsync(new Application
+        var appJson = await PostAsync(cred, "/applications", new
         {
-            DisplayName = displayName,
-            SignInAudience = "AzureADMyOrg",
-            RequiredResourceAccess = resources
-        }, cancellationToken: ct) ?? throw new InvalidOperationException("App-Registrierung fehlgeschlagen.");
-        Log?.Invoke($"App angelegt: {app.AppId}");
+            displayName,
+            signInAudience = "AzureADMyOrg",
+            requiredResourceAccess = resourceAccess
+        }, ct).ConfigureAwait(false);
+
+        var appObjectId = appJson.GetProperty("id").GetString()!;
+        var appId = appJson.GetProperty("appId").GetString()!;
+        Log?.Invoke($"App angelegt: {appId}");
 
         // 2) Client-Secret
-        var secret = await graph.Applications[app.Id].AddPassword.PostAsync(
-            new Microsoft.Graph.Applications.Item.AddPassword.AddPasswordPostRequestBody
-            {
-                PasswordCredential = new PasswordCredential
-                {
-                    DisplayName = "IMAP2M365",
-                    EndDateTime = DateTimeOffset.UtcNow.AddYears(1)
-                }
-            }, cancellationToken: ct);
+        var secretJson = await PostAsync(cred, $"/applications/{appObjectId}/addPassword", new
+        {
+            passwordCredential = new { displayName = "IMAP2M365", endDateTime = DateTimeOffset.UtcNow.AddYears(1) }
+        }, ct).ConfigureAwait(false);
+        var secret = secretJson.GetProperty("secretText").GetString() ?? "";
         Log?.Invoke("Client-Secret erzeugt (1 Jahr gültig).");
 
-        // 3) ServicePrincipal zur App
-        var sp = await graph.ServicePrincipals.PostAsync(new ServicePrincipal { AppId = app.AppId }, cancellationToken: ct)
-                 ?? throw new InvalidOperationException("ServicePrincipal-Anlage fehlgeschlagen.");
+        // 3) ServicePrincipal zur App (kurz retrien, App-Propagation abwarten)
+        string spObjectId = await CreateServicePrincipalAsync(cred, appId, ct).ConfigureAwait(false);
 
         // 4) Admin-Consent = appRoleAssignment je Ressource
-        await GrantConsentAsync(graph, sp.Id!, ExchangeOnlineResourceAppId, ImapAccessAsApp, ct);
+        await GrantConsentAsync(cred, spObjectId, ExchangeOnlineResourceAppId, ImapAccessAsApp, ct).ConfigureAwait(false);
         if (includeGraphTarget)
-            await GrantConsentAsync(graph, sp.Id!, GraphResourceAppId, MailReadWrite, ct);
+            await GrantConsentAsync(cred, spObjectId, GraphResourceAppId, MailReadWrite, ct).ConfigureAwait(false);
 
         Log?.Invoke("Admin-Consent erteilt.");
-        return (app.AppId!, sp.Id!, secret?.SecretText ?? "");
+        return (appId, spObjectId, secret);
+    }
+
+    private async Task<string> CreateServicePrincipalAsync(TokenCredential cred, string appId, CancellationToken ct)
+    {
+        for (int attempt = 0; ; attempt++)
+        {
+            try
+            {
+                var sp = await PostAsync(cred, "/servicePrincipals", new { appId }, ct).ConfigureAwait(false);
+                return sp.GetProperty("id").GetString()!;
+            }
+            catch (HttpRequestException) when (attempt < 5)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5), ct).ConfigureAwait(false); // App noch nicht propagiert
+            }
+        }
     }
 
     private async Task GrantConsentAsync(
-        GraphServiceClient graph, string clientSpId, string resourceAppId, string appRoleId, CancellationToken ct)
+        TokenCredential cred, string clientSpId, string resourceAppId, string appRoleId, CancellationToken ct)
     {
-        // ServicePrincipal der Ressource (z. B. EXO) im Tenant finden
-        var res = await graph.ServicePrincipals.GetAsync(r =>
-        {
-            r.QueryParameters.Filter = $"appId eq '{resourceAppId}'";
-            r.QueryParameters.Top = 1;
-        }, ct);
-        var resourceSp = res?.Value?.FirstOrDefault()
-            ?? throw new InvalidOperationException($"Ressourcen-ServicePrincipal {resourceAppId} nicht gefunden.");
+        var res = await GetAsync(cred, $"/servicePrincipals?$filter=appId eq '{resourceAppId}'&$select=id&$top=1", ct)
+            .ConfigureAwait(false);
+        var arr = res.GetProperty("value");
+        if (arr.GetArrayLength() == 0)
+            throw new InvalidOperationException($"Ressourcen-ServicePrincipal {resourceAppId} nicht gefunden.");
+        var resourceId = arr[0].GetProperty("id").GetString()!;
 
-        await graph.ServicePrincipals[clientSpId].AppRoleAssignments.PostAsync(new AppRoleAssignment
+        await PostAsync(cred, $"/servicePrincipals/{clientSpId}/appRoleAssignments", new
         {
-            PrincipalId = Guid.Parse(clientSpId),
-            ResourceId = Guid.Parse(resourceSp.Id!),
-            AppRoleId = Guid.Parse(appRoleId)
-        }, cancellationToken: ct);
+            principalId = clientSpId,
+            resourceId,
+            appRoleId
+        }, ct).ConfigureAwait(false);
+    }
+
+    // --- REST-Helfer ---
+
+    private async Task<string> TokenAsync(TokenCredential cred, CancellationToken ct)
+    {
+        var t = await cred.GetTokenAsync(new TokenRequestContext(new[] { "https://graph.microsoft.com/.default" }), ct)
+            .ConfigureAwait(false);
+        return t.Token;
+    }
+
+    private async Task<JsonElement> PostAsync(TokenCredential cred, string path, object body, CancellationToken ct)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Post, Base + path)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
+        };
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", await TokenAsync(cred, ct).ConfigureAwait(false));
+        using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+        var text = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        if (!resp.IsSuccessStatusCode)
+            throw new HttpRequestException($"POST {path} -> {(int)resp.StatusCode}: {text}");
+        return JsonDocument.Parse(text).RootElement.Clone();
+    }
+
+    private async Task<JsonElement> GetAsync(TokenCredential cred, string path, CancellationToken ct)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, Base + path);
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", await TokenAsync(cred, ct).ConfigureAwait(false));
+        using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+        var text = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        if (!resp.IsSuccessStatusCode)
+            throw new HttpRequestException($"GET {path} -> {(int)resp.StatusCode}: {text}");
+        return JsonDocument.Parse(text).RootElement.Clone();
     }
 }

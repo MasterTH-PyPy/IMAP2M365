@@ -14,16 +14,15 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="IMAP2M365.Core.csproj" />
+    <ProjectReference Include="..\Core\IMAP2M365.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- EXO-Cmdlets in-process: Microsoft.PowerShell.SDK + Exchange-Online-Modul.
-         Das Modul ExchangeOnlineManagement wird zur Laufzeit erwartet (siehe ExoRunner). -->
+    <!-- EXO-Cmdlets in-process: Microsoft.PowerShell.SDK + Modul ExchangeOnlineManagement (Laufzeit). -->
     <PackageReference Include="Microsoft.PowerShell.SDK" Version="7.*" />
 
-    <!-- Graph-App-Provisionierung + interaktiver Admin-Login -->
-    <PackageReference Include="Microsoft.Graph" Version="5.*" />
+    <!-- Entra-App-Provisionierung + Admin-Login: REST über HttpClient, Token via Azure.Identity.
+         Bewusst KEIN Microsoft.Graph (zieht verwundbares Microsoft.Kiota.Abstractions nach, NU1903). -->
     <PackageReference Include="Azure.Identity" Version="1.*" />
   </ItemGroup>
 

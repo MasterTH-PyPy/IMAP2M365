@@ -1,8 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!-- Engine-Bibliothek: plattformneutral (net10.0), damit testbar.
-       Die WinForms-GUI kommt als separates net10.0-windows-Projekt obendrauf
-       und referenziert diese DLL. -->
+       Die WinForms-GUI (src/Gui) referenziert diese DLL. -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -14,7 +13,7 @@
   <ItemGroup>
     <PackageReference Include="MailKit" Version="4.*" />
     <PackageReference Include="Microsoft.Identity.Client" Version="4.*" />
-    <!-- Graph-Target (zweiter Provider): app-only Token via Azure.Identity, REST-Import -->
+    <!-- app-only Graph-Token (GraphTarget nutzt REST, kein Microsoft.Graph/Kiota) -->
     <PackageReference Include="Azure.Identity" Version="1.*" />
   </ItemGroup>
 
