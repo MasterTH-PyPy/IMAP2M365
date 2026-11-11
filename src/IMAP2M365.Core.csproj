@@ -14,9 +14,8 @@
   <ItemGroup>
     <PackageReference Include="MailKit" Version="4.*" />
     <PackageReference Include="Microsoft.Identity.Client" Version="4.*" />
-    <!-- Graph-Target (zweiter Provider): aktivieren, wenn du GraphTarget baust
-    <PackageReference Include="Microsoft.Graph" Version="5.*" />
-    -->
+    <!-- Graph-Target (zweiter Provider): app-only Token via Azure.Identity, REST-Import -->
+    <PackageReference Include="Azure.Identity" Version="1.*" />
   </ItemGroup>
 
 </Project>

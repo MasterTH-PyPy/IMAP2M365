@@ -75,5 +75,5 @@ Default für alle Zeilen. Passwörter verschlüsselt in `config.enc` (AES-256), 
 - [x] ImapAppendTarget (MailKit XOAUTH2, APPEND mit Flags + INTERNALDATE)
 - [x] MigrationEngine (Ordner-Mapping, Dedup über Message-Id, Dry-Run)
 - [x] WinForms-GUI (Einrichtungs-Wizard, Postfach-Grid, Mapping, Fortschritt, Log)
-- [ ] GraphTarget (zweiter Provider)
+- [x] GraphTarget (zweiter Provider, MIME-Import + Throttling), umschaltbar in der GUI
 - [ ] App-Icon (Umschlag + Pfeil nach Wolke)

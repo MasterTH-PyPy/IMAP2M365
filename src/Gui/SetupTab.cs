@@ -105,7 +105,8 @@ public sealed class SetupTab : UserControl
 
             _config.ClientId = appId;
             _config.ClientSecret = secret;
-            _log($"Fertig: ClientId {appId}. Secret liegt in der Konfiguration. ServicePrincipal-Objekt: {spObj}");
+            _config.SpObjectId = spObj;
+            _log($"Fertig: ClientId {appId}. Secret und ServicePrincipal-ObjectId liegen in der Konfiguration.");
             _log("Hinweis: ServicePrincipal in EXO wird in Schritt 4 registriert.");
         }
         catch (Exception ex) { _log("Provisionierung fehlgeschlagen: " + ex.Message); }
@@ -186,11 +187,18 @@ public sealed class SetupTab : UserControl
 
     private string? PromptMissingSpObjectId()
     {
-        // Die ServiceId (ObjectId des Enterprise-App-ServicePrincipals) wird für New-ServicePrincipal
-        // und Add-MailboxPermission gebraucht. Nach Schritt 1 steht sie im Log; hier abfragen,
-        // falls nicht programmatisch durchgereicht.
-        using var dlg = new InputDialog("ServicePrincipal ObjectId (ServiceId aus Schritt 1 / Entra):");
-        return dlg.ShowDialog() == DialogResult.OK && !string.IsNullOrWhiteSpace(dlg.Value) ? dlg.Value.Trim() : null;
+        // Normalfall: ObjectId stammt direkt aus Schritt 1 (ProvisionAsync) und steht in der Konfig.
+        if (!string.IsNullOrWhiteSpace(_config.SpObjectId))
+            return _config.SpObjectId;
+
+        // Fallback: Einrichtung mit bereits vorhandener App (ohne Schritt 1) – dann manuell eingeben.
+        using var dlg = new InputDialog("ServicePrincipal ObjectId (ServiceId; nur nötig, wenn Schritt 1 übersprungen):");
+        if (dlg.ShowDialog() == DialogResult.OK && !string.IsNullOrWhiteSpace(dlg.Value))
+        {
+            _config.SpObjectId = dlg.Value.Trim();
+            return _config.SpObjectId;
+        }
+        return null;
     }
 
     private void CommitGridEdits()

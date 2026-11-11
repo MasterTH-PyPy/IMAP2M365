@@ -16,6 +16,8 @@ public sealed class MigrationTab : UserControl
     private readonly Button _start = new() { Text = "Migration starten", Width = 160 };
     private readonly Button _cancel = new() { Text = "Abbrechen", Width = 100, Enabled = false };
     private readonly CheckBox _dryRun = new() { Text = "Dry-Run", Checked = true, AutoSize = true };
+    private readonly Label _backendLabel = new() { Text = "Ziel-Backend:", AutoSize = true, Padding = new Padding(12, 6, 2, 0) };
+    private readonly ComboBox _backend = new() { Width = 180, DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly ProgressBar _bar = new() { Dock = DockStyle.Top, Height = 22 };
     private readonly Label _state = new() { Dock = DockStyle.Top, Height = 22, Text = "Bereit." };
 
@@ -26,8 +28,11 @@ public sealed class MigrationTab : UserControl
         _config = config;
         _log = log;
 
+        _backend.Items.AddRange(new object[] { "IMAP-APPEND (XOAUTH2)", "Microsoft Graph" });
+        _backend.SelectedIndex = _config.TargetKind.Equals("Graph", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 44, Padding = new Padding(8, 6, 8, 6) };
-        buttons.Controls.AddRange(new Control[] { _start, _cancel, _dryRun });
+        buttons.Controls.AddRange(new Control[] { _start, _cancel, _dryRun, _backendLabel, _backend });
 
         Controls.Add(_state);
         Controls.Add(_bar);
@@ -45,6 +50,7 @@ public sealed class MigrationTab : UserControl
         _cts = new CancellationTokenSource();
         _start.Enabled = false; _cancel.Enabled = true;
         var dry = _dryRun.Checked;
+        var useGraph = _backend.SelectedIndex == 1;
 
         var cfg = new MigrationConfig
         {
@@ -56,10 +62,12 @@ public sealed class MigrationTab : UserControl
             SourceUseSsl = _config.SourceUseSsl,
             DryRun = dry,
             ExcludedFolders = _config.ExcludedFolders,
-            Target = TargetKind.ImapAppend
+            Target = useGraph ? TargetKind.Graph : TargetKind.ImapAppend
         };
 
+        // Token-Provider nur für das IMAP-Backend nötig; GraphTarget baut eigene Credentials.
         var tokens = new ExchangeOnlineTokenProvider(cfg.TenantId, cfg.ClientId, cfg.ClientSecret);
+        _log($"Ziel-Backend: {(useGraph ? "Microsoft Graph" : "IMAP-APPEND (XOAUTH2)")}");
 
         try
         {
@@ -75,7 +83,10 @@ public sealed class MigrationTab : UserControl
                 await using var source = new ImapSource(host, port, cfg.SourceUseSsl, row.SourceUser, row.SourcePassword);
                 await source.ConnectAsync(_cts.Token);
 
-                await using var target = new ImapAppendTarget(tokens);
+                IMailTarget target = useGraph
+                    ? new GraphTarget(cfg.TenantId, cfg.ClientId, cfg.ClientSecret)
+                    : new ImapAppendTarget(tokens);
+                await using var _ = target;
                 if (!dry) await target.ConnectAsync(row.TargetSmtp, _cts.Token);
 
                 var engine = new MigrationEngine(

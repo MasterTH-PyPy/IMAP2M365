@@ -9,6 +9,7 @@ public sealed class AppConfig
     public string TenantId { get; set; } = "";
     public string ClientId { get; set; } = "";
     public string ClientSecret { get; set; } = "";
+    public string SpObjectId { get; set; } = ""; // ObjectId des ServicePrincipals (aus Provisionierung)
     public string TargetDomain { get; set; } = ""; // z. B. contoso.onmicrosoft.com
 
     // Zentrale Quell-IMAP-Defaults
