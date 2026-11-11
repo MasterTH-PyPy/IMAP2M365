@@ -45,6 +45,25 @@ Siehe `prep/Register-ExchangeServicePrincipal.ps1`:
 `config.enc` → TenantId, ClientId, ClientSecret, Quell-IMAP-Defaults,
 Postfach-Mapping-CSV-Pfad, Ordner-Ausschlüsse, Dry-Run-Flag.
 
+## Lizenzierung (node-locked, offline)
+
+- **Ein RSA-3072-Schlüsselpaar.** Privater Key nur im Generator (`tools/LicenseGenerator`),
+  öffentlicher Key im Tool (`src/Core/Licensing/EmbeddedPublicKey.cs`). Das Tool kann
+  Lizenzen nur prüfen, nicht fälschen.
+- **Computer-ID**: Hash aus MachineGuid + BIOS-UUID + Rechnername (`MachineId`), plus
+  VM-Erkennung (VMware/VirtualBox/Hyper-V/KVM/QEMU…). Reiter „Lizenz" zeigt ID/Name/VM.
+- **Ablauf**: Kunde gibt Firmendaten ein → „Aktivierungsanfrage erzeugen" (mit dem
+  öffentlichen Key hybrid verschlüsselt, nur der Lizenzgeber liest sie) → an Lizenzgeber
+  senden. Generator entschlüsselt, zeigt Kundendaten + Computer-ID + VM-Flag, man gibt die
+  Kontenzahl ein → signierter Lizenzschlüssel → Kunde aktiviert ihn im Reiter „Lizenz".
+- **Verbrauch**: **Vollmigration** zieht pro Zielpostfach eine Lizenz (idempotent über SMTP);
+  **Testmodus** kopiert nur die ersten 10 Mails/Postfach und verbraucht nichts. Verbrauchsstand
+  liegt AES-GCM-verschlüsselt und an die Computer-ID gebunden unter `ProgramData\IMAP2M365`.
+- **Grenzen (ehrlich)**: VM-Umgehung und Reset durch Löschen der Verbrauchsdatei sind offline
+  ohne Lizenzserver nicht vollständig verhinderbar; die Hürde ist hoch, aber nicht absolut.
+- **Produktivschlüssel**: im Generator `[1] Schlüsselpaar erzeugen`, `public.pem` in
+  `EmbeddedPublicKey.cs` eintragen, `private.pem` geheim halten.
+
 ## Voraussetzungen
 
 - Windows mit PowerShell 7 (für den EXO-Teil) und dem Modul

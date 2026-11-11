@@ -1,4 +1,5 @@
 using IMAP2M365.Core;
+using IMAP2M365.Licensing;
 using IMAP2M365.Sources;
 using IMAP2M365.Targets;
 
@@ -6,12 +7,17 @@ namespace IMAP2M365.Gui;
 
 /// <summary>
 /// Fährt die eigentliche Migration: pro Postfachzeile Quell-IMAP -> EXO (XOAUTH2-APPEND),
-/// mit Fortschrittsbalken und Dry-Run. Nutzt den zentralen Quell-Server bzw. den Override pro Zeile.
+/// mit Fortschrittsbalken. Testmodus kopiert nur die ersten N Mails/Postfach (keine Lizenz),
+/// Vollmigration verbraucht pro Postfach eine Lizenz.
 /// </summary>
 public sealed class MigrationTab : UserControl
 {
+    private const int TestMessageLimit = 10;
+
     private readonly AppConfig _config;
     private readonly Action<string> _log;
+    private readonly LicenseManager _license;
+    private readonly Action _onLicenseChanged;
 
     private static Button ActionButton(string text, bool enabled = true) => new()
     {
@@ -27,7 +33,7 @@ public sealed class MigrationTab : UserControl
 
     private readonly Button _start = ActionButton("Migration starten");
     private readonly Button _cancel = ActionButton("Abbrechen", enabled: false);
-    private readonly CheckBox _dryRun = new() { Text = "Dry-Run", Checked = true, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(12, 4, 4, 4) };
+    private readonly CheckBox _testMode = new() { Text = $"Testmodus (erste {TestMessageLimit} Mails)", Checked = true, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(12, 4, 4, 4) };
     private readonly Label _backendLabel = new() { Text = "Ziel-Backend:", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(16, 4, 2, 4) };
     private readonly ComboBox _backend = new() { Width = 180, DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left, Margin = new Padding(4) };
     private readonly ProgressBar _bar = new() { Dock = DockStyle.Top, Height = 22 };
@@ -35,10 +41,12 @@ public sealed class MigrationTab : UserControl
 
     private CancellationTokenSource? _cts;
 
-    public MigrationTab(AppConfig config, Action<string> log)
+    public MigrationTab(AppConfig config, Action<string> log, LicenseManager license, Action onLicenseChanged)
     {
         _config = config;
         _log = log;
+        _license = license;
+        _onLicenseChanged = onLicenseChanged;
 
         _backend.Items.AddRange(new object[] { "IMAP-APPEND (XOAUTH2)", "Microsoft Graph" });
         _backend.SelectedIndex = _config.TargetKind.Equals("Graph", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
@@ -48,7 +56,7 @@ public sealed class MigrationTab : UserControl
         for (int i = 0; i < 5; i++) buttons.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         buttons.Controls.Add(_start, 0, 0);
         buttons.Controls.Add(_cancel, 1, 0);
-        buttons.Controls.Add(_dryRun, 2, 0);
+        buttons.Controls.Add(_testMode, 2, 0);
         buttons.Controls.Add(_backendLabel, 3, 0);
         buttons.Controls.Add(_backend, 4, 0);
 
@@ -70,7 +78,6 @@ public sealed class MigrationTab : UserControl
     public void LoadFromConfig()
     {
         _backend.SelectedIndex = _config.TargetKind.Equals("Graph", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
-        _dryRun.Checked = _config.DryRun;
     }
 
     private async Task RunAsync()
@@ -78,9 +85,22 @@ public sealed class MigrationTab : UserControl
         if (_config.Mailboxes.Count == 0) { _log("Keine Postfächer - erst im Reiter Einrichtung laden."); return; }
         if (string.IsNullOrWhiteSpace(_config.ClientId)) { _log("Keine ClientId – erst Einrichtung ausführen."); return; }
 
+        var testMode = _testMode.Checked;
+
+        // Lizenzprüfung nur für die echte Vollmigration; Testmodus ist frei.
+        if (!testMode)
+        {
+            if (!_license.HasValidLicense)
+            {
+                _log("Keine gültige Lizenz – bitte im Reiter „Lizenz" aktivieren. (Testmodus bleibt nutzbar.)");
+                return;
+            }
+            var needed = _config.Mailboxes.Count(m => !_license.IsConsumed(m.TargetSmtp));
+            _log($"Lizenz: {_license.Remaining} frei, {needed} neue Postfächer in dieser Migration.");
+        }
+
         _cts = new CancellationTokenSource();
         _start.Enabled = false; _cancel.Enabled = true;
-        var dry = _dryRun.Checked;
         var useGraph = _backend.SelectedIndex == 1;
 
         var cfg = new MigrationConfig
@@ -91,14 +111,14 @@ public sealed class MigrationTab : UserControl
             SourceHost = _config.SourceHost,
             SourcePort = _config.SourcePort,
             SourceUseSsl = _config.SourceUseSsl,
-            DryRun = dry,
+            TestMessageLimit = testMode ? TestMessageLimit : 0,
             ExcludedFolders = _config.ExcludedFolders,
             Target = useGraph ? TargetKind.Graph : TargetKind.ImapAppend
         };
 
         // Token-Provider nur für das IMAP-Backend nötig; GraphTarget baut eigene Credentials.
         var tokens = new ExchangeOnlineTokenProvider(cfg.TenantId, cfg.ClientId, cfg.ClientSecret);
-        _log($"Ziel-Backend: {(useGraph ? "Microsoft Graph" : "IMAP-APPEND (XOAUTH2)")}");
+        _log($"Ziel-Backend: {(useGraph ? "Microsoft Graph" : "IMAP-APPEND (XOAUTH2)")}" + (testMode ? " · Testmodus" : " · Vollmigration"));
 
         try
         {
@@ -107,6 +127,13 @@ public sealed class MigrationTab : UserControl
             {
                 _cts.Token.ThrowIfCancellationRequested();
                 SetState($"Postfach {++i}/{_config.Mailboxes.Count}: {row.TargetSmtp}");
+
+                // Vollmigration: Lizenz pro Postfach ziehen (idempotent). Leer -> Postfach überspringen.
+                if (!testMode && !_license.TryConsume(row.TargetSmtp))
+                {
+                    _log($"{row.TargetSmtp}: übersprungen – keine freie Lizenz mehr ({_license.ConsumedCount}/{_license.MaxAccounts} verbraucht).");
+                    continue;
+                }
 
                 var host = row.SourceHostOverride ?? cfg.SourceHost;
                 var port = row.SourcePortOverride ?? cfg.SourcePort;
@@ -118,7 +145,7 @@ public sealed class MigrationTab : UserControl
                     ? new GraphTarget(cfg.TenantId, cfg.ClientId, cfg.ClientSecret)
                     : new ImapAppendTarget(tokens);
                 await using var _ = target;
-                if (!dry) await target.ConnectAsync(row.TargetSmtp, _cts.Token);
+                await target.ConnectAsync(row.TargetSmtp, _cts.Token);
 
                 var engine = new MigrationEngine(
                     cfg,
@@ -132,7 +159,8 @@ public sealed class MigrationTab : UserControl
                     log: _log);
 
                 var (copied, skipped) = await engine.RunAsync(row.TargetSmtp, source, target, _cts.Token);
-                _log($"{row.TargetSmtp}: {copied} kopiert, {skipped} übersprungen{(dry ? " (dry-run)" : "")}");
+                _log($"{row.TargetSmtp}: {copied} kopiert, {skipped} übersprungen{(testMode ? " (Testmodus)" : "")}");
+                _onLicenseChanged();
             }
             SetState("Fertig.");
         }

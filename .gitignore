@@ -8,6 +8,14 @@ config.enc
 mailboxes.csv
 *.secret
 
+# Lizenz-Material (niemals einchecken)
+*.pem
+*.req
+lizenz_*.key
+license.key
+private.pem
+public.pem
+
 # IDE
 .vs/
 .idea/

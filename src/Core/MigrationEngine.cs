@@ -37,27 +37,21 @@ public sealed class MigrationEngine
             .Where(f => !_cfg.ExcludedFolders.Any(x => f.PathSegments.Any(s => s.Equals(x, StringComparison.OrdinalIgnoreCase))))
             .ToList();
 
+        var testMode = _cfg.TestMessageLimit > 0;
+
         for (int fi = 0; fi < selectable.Count; fi++)
         {
             ct.ThrowIfCancellationRequested();
             var folder = selectable[fi];
             var targetPath = _mapFolder(folder.PathSegments);
 
-            string handle = "";
-            if (!_cfg.DryRun)
-                handle = await target.EnsureFolderAsync(targetPath, ct).ConfigureAwait(false);
+            var handle = await target.EnsureFolderAsync(targetPath, ct).ConfigureAwait(false);
 
-            _log?.Invoke($"[{mailbox}] {folder.FullName} -> {string.Join('/', targetPath)}{(_cfg.DryRun ? " (dry-run)" : "")}");
+            _log?.Invoke($"[{mailbox}] {folder.FullName} -> {string.Join('/', targetPath)}{(testMode ? " (Testmodus)" : "")}");
 
             await foreach (var msg in source.ReadFolderAsync(folder, ct).ConfigureAwait(false))
             {
                 ct.ThrowIfCancellationRequested();
-
-                if (_cfg.DryRun)
-                {
-                    copied++; // im Dry-Run zählt alles als "würde kopiert"
-                    continue;
-                }
 
                 if (await target.ExistsAsync(handle, msg.MessageId, ct).ConfigureAwait(false))
                 {
@@ -68,14 +62,21 @@ public sealed class MigrationEngine
                 await target.AppendAsync(handle, msg, ct).ConfigureAwait(false);
                 copied++;
 
-                if ((copied & 0x3F) == 0) // alle 64 Nachrichten Fortschritt melden
+                if ((copied & 0x3F) == 0)
                     _progress?.Report(new MigrationProgress(mailbox, folder.FullName, fi + 1, selectable.Count, copied, skipped));
+
+                if (testMode && copied >= _cfg.TestMessageLimit)
+                {
+                    _log?.Invoke($"[{mailbox}] Testmodus: {copied} Nachrichten kopiert – Abbruch wie vorgesehen.");
+                    _progress?.Report(new MigrationProgress(mailbox, folder.FullName, fi + 1, selectable.Count, copied, skipped));
+                    return (copied, skipped);
+                }
             }
 
             _progress?.Report(new MigrationProgress(mailbox, folder.FullName, fi + 1, selectable.Count, copied, skipped));
         }
 
-        _log?.Invoke($"[{mailbox}] fertig: {copied} kopiert, {skipped} übersprungen{(_cfg.DryRun ? " (dry-run)" : "")}");
+        _log?.Invoke($"[{mailbox}] fertig: {copied} kopiert, {skipped} übersprungen{(testMode ? " (Testmodus)" : "")}");
         return (copied, skipped);
     }
 }

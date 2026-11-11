@@ -63,6 +63,8 @@ public sealed class MigrationConfig
 
     // Verhalten
     public bool DryRun { get; init; } = true;
+    /// <summary>Testmodus: nach so vielen kopierten Nachrichten pro Postfach abbrechen (0 = unbegrenzt).</summary>
+    public int TestMessageLimit { get; init; } = 0;
     public IReadOnlyList<string> ExcludedFolders { get; init; } = new[] { "Junk", "Trash", "Deleted Items" };
     public TargetKind Target { get; init; } = TargetKind.ImapAppend;
 }

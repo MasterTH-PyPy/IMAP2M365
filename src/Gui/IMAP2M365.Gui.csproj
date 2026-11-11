@@ -26,6 +26,9 @@
     <!-- Entra-App-Provisionierung + Admin-Login: REST über HttpClient, Token via Azure.Identity.
          Bewusst KEIN Microsoft.Graph (zieht verwundbares Microsoft.Kiota.Abstractions nach, NU1903). -->
     <PackageReference Include="Azure.Identity" Version="1.*" />
+
+    <!-- WMI für Maschinen-Fingerprint / VM-Erkennung (Lizenzierung) -->
+    <PackageReference Include="System.Management" Version="9.*" />
   </ItemGroup>
 
 </Project>

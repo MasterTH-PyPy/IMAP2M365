@@ -20,6 +20,10 @@ public sealed class MainForm : Form
 
     private SetupTab _setupTab = null!;
     private MigrationTab _migrationTab = null!;
+    private LicenseTab _licenseTab = null!;
+
+    private readonly MachineId.Info _machine = MachineId.Current();
+    private readonly Licensing.LicenseManager _license;
 
     private const string BaseTitle = "IMAP2M365 – IMAP nach Microsoft 365";
     private string? _currentPath;       // Pfad der aktuell geladenen .enc
@@ -35,6 +39,25 @@ public sealed class MainForm : Form
         }
     }
 
+    /// <summary>Lizenz-/Verbrauchsdaten maschinenweit (ProgramData), Fallback LocalAppData.</summary>
+    private static string LicenseDir
+    {
+        get
+        {
+            foreach (var folder in new[] { Environment.SpecialFolder.CommonApplicationData, Environment.SpecialFolder.LocalApplicationData })
+            {
+                try
+                {
+                    var dir = Path.Combine(Environment.GetFolderPath(folder), "IMAP2M365");
+                    Directory.CreateDirectory(dir);
+                    return dir;
+                }
+                catch { /* nächster Kandidat */ }
+            }
+            return Path.Combine(Path.GetTempPath(), "IMAP2M365");
+        }
+    }
+
     public MainForm()
     {
         Text = BaseTitle;
@@ -45,15 +68,20 @@ public sealed class MainForm : Form
         // Fenster-/Taskbar-Icon aus dem eingebetteten EXE-Icon (ApplicationIcon) setzen.
         try { Icon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!); } catch { /* egal */ }
 
+        _license = new Licensing.LicenseManager(LicenseDir, _machine.Id);
+
         var tabs = new TabControl { Dock = DockStyle.Fill };
 
         _setupTab = new SetupTab(_config, Log);
-        _migrationTab = new MigrationTab(_config, Log);
+        _migrationTab = new MigrationTab(_config, Log, _license, () => _licenseTab?.UpdateStatus());
+        _licenseTab = new LicenseTab(_license, _machine, Log);
 
         tabs.TabPages.Add(new TabPage("Einrichtung") { Controls = { _setupTab } });
         tabs.TabPages.Add(new TabPage("Migration") { Controls = { _migrationTab } });
+        tabs.TabPages.Add(new TabPage("Lizenz") { Controls = { _licenseTab } });
         _setupTab.Dock = DockStyle.Fill;
         _migrationTab.Dock = DockStyle.Fill;
+        _licenseTab.Dock = DockStyle.Fill;
 
         // Log-Panel unten, per Splitter abtrennbar
         var split = new SplitContainer
