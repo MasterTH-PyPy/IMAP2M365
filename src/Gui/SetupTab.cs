@@ -335,6 +335,10 @@ public sealed class InputDialog : Form
         Controls.Add(new Label { Text = prompt, Dock = DockStyle.Top, Height = 24 });
         Controls.Add(buttons);
         AcceptButton = ok; CancelButton = cancel;
+
+        // Nach einem Browser-Login kann ein modaler Dialog sonst hinter dem Hauptfenster landen.
+        TopMost = true;
+        Shown += (_, _) => { Activate(); BringToFront(); };
     }
 }
 
@@ -363,10 +367,14 @@ public sealed class ChooserDialog : Form
         AcceptButton = ok; CancelButton = cancel;
     }
 
-    /// <summary>Zeigt den Dialog; gibt den gewählten Index zurück oder -1 bei Abbruch.</summary>
+    /// <summary>Zeigt den Dialog im Vordergrund; gibt den gewählten Index zurück oder -1 bei Abbruch.</summary>
     public static int Pick(string prompt, IReadOnlyList<string> items)
     {
         using var dlg = new ChooserDialog(prompt, items);
-        return dlg.ShowDialog() == DialogResult.OK ? dlg._list.SelectedIndex : -1;
+        var owner = Form.ActiveForm; // sonst kann der modale Dialog hinter dem Hauptfenster landen
+        dlg.StartPosition = owner is not null ? FormStartPosition.CenterParent : FormStartPosition.CenterScreen;
+        dlg.TopMost = true;
+        dlg.Shown += (_, _) => { dlg.Activate(); dlg.BringToFront(); };
+        return dlg.ShowDialog(owner) == DialogResult.OK ? dlg._list.SelectedIndex : -1;
     }
 }
