@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using IMAP2M365.Core;
 using IMAP2M365.Licensing;
 using IMAP2M365.Sources;
@@ -298,19 +299,22 @@ public sealed class MigrationTab : UserControl
                 if (!got) { jlog($"{row.TargetSmtp}: übersprungen – keine freie Lizenz mehr."); return; }
             }
 
+            var sw = Stopwatch.StartNew();
             var engine = new MigrationEngine(cfg, mapFolder: MapFolder, progress: jobProgress, log: jlog);
             var res = await engine.RunAsync(row.TargetSmtp, source, target, ct, index, activeTotal);
+            sw.Stop();
             perMailboxCopied[row.TargetSmtp] = res.Copied;
             Interlocked.Add(ref totalCopied, res.Copied);
             Interlocked.Add(ref totalSkipped, res.Skipped);
             Interlocked.Add(ref totalFailed, res.Failed);
             Interlocked.Add(ref totalDown, res.BytesDown);
             Interlocked.Add(ref totalUp, res.BytesUp);
-            jlog($"{row.TargetSmtp}: {res.Copied} kopiert, {res.Skipped} übersprungen, {Human(res.BytesUp)} hochgeladen" +
+            jlog($"{row.TargetSmtp}: {res.Copied} kopiert, {res.Skipped} übersprungen, {Human(res.BytesUp)} hochgeladen · Dauer {Duration(sw.Elapsed)}" +
                  (testMode ? " (Testmodus)" : mirror ? " (Spiegel)" : ""));
         }
 
         _start.Enabled = false; _cancel.Enabled = true;
+        var runSw = Stopwatch.StartNew();
         try
         {
             var indexed = active.Select((row, idx) => (row, idx: idx + 1)).ToList();
@@ -333,15 +337,16 @@ public sealed class MigrationTab : UserControl
                     }
                 });
 
+            runSw.Stop();
             var cop = Interlocked.Read(ref totalCopied);
             var skp = Interlocked.Read(ref totalSkipped);
             var fai = Interlocked.Read(ref totalFailed);
             var down = Interlocked.Read(ref totalDown);
             var up = Interlocked.Read(ref totalUp);
 
-            SetState($"Fertig. {cop} kopiert, {skp} übersprungen" + (fai > 0 ? $", {fai} fehlerhaft" : "") + $" · {Human(up)} hochgeladen");
-            _log($"Statistik dieser Migration: {cop} Nachrichten · {Human(up)} hochgeladen · {Human(down)} heruntergeladen" +
-                 (fai > 0 ? $" · {fai} fehlerhaft" : ""));
+            SetState($"Fertig in {Duration(runSw.Elapsed)}. {cop} kopiert, {skp} übersprungen" + (fai > 0 ? $", {fai} fehlerhaft" : "") + $" · {Human(up)} hochgeladen");
+            _log($"Zusammenfassung: {cop} Nachrichten · {Human(up)} hochgeladen · {Human(down)} heruntergeladen" +
+                 (fai > 0 ? $" · {fai} fehlerhaft" : "") + $" · Gesamtdauer {Duration(runSw.Elapsed)}");
 
             // Kumuliert in die Konfiguration schreiben (wird beim Speichern des Profils persistiert).
             _config.StatMessagesCopied += cop;
@@ -353,6 +358,10 @@ public sealed class MigrationTab : UserControl
         catch (Exception ex) { SetState("Fehler."); _log("Migration fehlgeschlagen: " + ex.Message); }
         finally { _start.Enabled = true; _cancel.Enabled = false; _cts?.Dispose(); _cts = null; }
     }
+
+    /// <summary>Dauer menschenlesbar (h:mm:ss bzw. m:ss).</summary>
+    private static string Duration(TimeSpan t) =>
+        t.TotalHours >= 1 ? $"{(int)t.TotalHours}:{t.Minutes:00}:{t.Seconds:00} h" : $"{t.Minutes}:{t.Seconds:00} min";
 
     /// <summary>Bytes menschenlesbar (KB/MB/GB).</summary>
     private static string Human(long bytes)

@@ -68,6 +68,9 @@ public sealed class MainForm : Form
         // Fenster-/Taskbar-Icon aus dem eingebetteten EXE-Icon (ApplicationIcon) setzen.
         try { Icon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!); } catch { /* egal */ }
 
+        LoadWindowPlacement();
+        FormClosing += (_, _) => SaveWindowPlacement();
+
         _license = new Licensing.LicenseManager(LicenseDir, _machine.Id);
 
         var tabs = new TabControl { Dock = DockStyle.Fill };
@@ -208,6 +211,50 @@ public sealed class MainForm : Form
     {
         if (InvokeRequired) { BeginInvoke(() => Log(line)); return; }
         _log.AppendText($"{DateTime.Now:HH:mm:ss}  {line}{Environment.NewLine}");
+    }
+
+    // --- Fensterposition/-größe merken (pro Benutzer, LocalAppData) ---
+
+    private sealed class WinPlacement { public int X { get; set; } public int Y { get; set; } public int W { get; set; } public int H { get; set; } public bool Max { get; set; } }
+
+    private static string WindowFile =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "IMAP2M365", "window.json");
+
+    private void LoadWindowPlacement()
+    {
+        try
+        {
+            if (!File.Exists(WindowFile)) return;
+            var p = System.Text.Json.JsonSerializer.Deserialize<WinPlacement>(File.ReadAllText(WindowFile));
+            if (p is null || p.W < 400 || p.H < 300) return;
+
+            var bounds = new Rectangle(p.X, p.Y, p.W, p.H);
+            // Nur übernehmen, wenn das Fenster (zumindest teilweise) auf einem Bildschirm liegt.
+            if (SystemInformation.VirtualScreen.IntersectsWith(bounds))
+            {
+                StartPosition = FormStartPosition.Manual;
+                Bounds = bounds;
+            }
+            else
+            {
+                Width = p.W; Height = p.H; // Größe ja, Position verwerfen -> zentriert
+            }
+            if (p.Max) WindowState = FormWindowState.Maximized;
+        }
+        catch { /* defekte Datei ignorieren */ }
+    }
+
+    private void SaveWindowPlacement()
+    {
+        try
+        {
+            var max = WindowState == FormWindowState.Maximized;
+            var r = max ? RestoreBounds : Bounds;
+            var p = new WinPlacement { X = r.X, Y = r.Y, W = r.Width, H = r.Height, Max = max };
+            Directory.CreateDirectory(Path.GetDirectoryName(WindowFile)!);
+            File.WriteAllText(WindowFile, System.Text.Json.JsonSerializer.Serialize(p));
+        }
+        catch { /* best effort */ }
     }
 
     private static string BuildVersion()
