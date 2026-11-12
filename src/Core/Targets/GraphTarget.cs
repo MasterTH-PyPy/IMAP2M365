@@ -76,16 +76,17 @@ public sealed class GraphTarget : IMailTarget
 
     public async Task<string> EnsureFolderAsync(IReadOnlyList<string> pathSegments, CancellationToken ct)
     {
-        // Einzelner kanonischer Name -> Wellknown-Folder direkt verwenden
-        if (pathSegments.Count == 1 && WellKnown.TryGetValue(pathSegments[0], out var wk))
-            return wk;
-
-        // Sonst Pfad unterhalb msgfolderroot auflösen/anlegen
+        // Kanonischer erster Abschnitt -> Wellknown-Folder (sprachunabhängig), sonst unter msgfolderroot.
         string parent = "msgfolderroot";
-        foreach (var segment in pathSegments)
+        var start = 0;
+        if (pathSegments.Count > 0 && WellKnown.TryGetValue(pathSegments[0], out var wk))
         {
-            parent = await FindOrCreateChildAsync(parent, segment, ct).ConfigureAwait(false);
+            parent = wk;
+            start = 1;
         }
+
+        for (var i = start; i < pathSegments.Count; i++)
+            parent = await FindOrCreateChildAsync(parent, pathSegments[i], ct).ConfigureAwait(false);
         return parent;
     }
 

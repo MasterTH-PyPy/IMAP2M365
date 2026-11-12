@@ -16,12 +16,16 @@ public sealed record SourceMessage(
     public string MessageId => Mime.MessageId ?? string.Empty;
 }
 
-public sealed record FolderInfo(string FullName, IReadOnlyList<string> PathSegments);
+/// <summary>
+/// Ein Quellordner. <c>Handle</c> ist die serverseitige Kennung, falls sie vom Anzeigepfad abweicht
+/// (EWS: FolderId); bei IMAP reicht <c>FullName</c>.
+/// </summary>
+public sealed record FolderInfo(string FullName, IReadOnlyList<string> PathSegments, string? Handle = null);
 
 /// <summary>Eine im Ziel vorhandene Nachricht: Message-Id (für Abgleich) + Lösch-Handle (UID bzw. Graph-Id).</summary>
 public sealed record TargetMessage(string MessageId, string DeleteHandle);
 
-/// <summary>Quelle: beliebiger IMAP-Server (Basic- oder XOAUTH2-Login).</summary>
+/// <summary>Quelle: IMAP-Server (Basic/XOAUTH2) oder Exchange on-prem (EWS).</summary>
 public interface IMailSource : IAsyncDisposable
 {
     Task ConnectAsync(CancellationToken ct);
@@ -34,7 +38,7 @@ public interface IMailSource : IAsyncDisposable
     IAsyncEnumerable<SourceMessage> ReadFolderAsync(FolderInfo folder, CancellationToken ct);
 }
 
-/// <summary>Ziel-Backend. IMAP-APPEND oder Graph – austauschbar.</summary>
+/// <summary>Ziel-Backend: IMAP-APPEND, Graph oder EWS – austauschbar.</summary>
 public interface IMailTarget : IAsyncDisposable
 {
     Task ConnectAsync(string targetMailbox, CancellationToken ct);

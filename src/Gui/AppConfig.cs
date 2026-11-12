@@ -17,6 +17,17 @@ public sealed class AppConfig
     public int SourcePort { get; set; } = 993;
     public bool SourceUseSsl { get; set; } = true;
 
+    // Quelle: "Imap" (beliebiger IMAP-Server) oder "OnPremEws" (Exchange on-prem per EWS + Impersonation)
+    public string SourceKind { get; set; } = "Imap";
+    public string OnPremEwsUrl { get; set; } = "";      // https://server/EWS/Exchange.asmx
+    public string OnPremPsUri { get; set; } = "";       // http://server/PowerShell/
+    public string OnPremPsAuth { get; set; } = "Kerberos";
+    public string OnPremAdminUser { get; set; } = "";   // Migrationskonto (DOMAIN\user oder UPN)
+    public string OnPremAdminPassword { get; set; } = "";
+    public bool OnPremAcceptAnyCert { get; set; }
+
+    [JsonIgnore] public bool SourceIsOnPrem => SourceKind.Equals("OnPremEws", StringComparison.OrdinalIgnoreCase);
+
     // Verhalten
     public bool DryRun { get; set; } = true;
     public List<string> ExcludedFolders { get; set; } = new() { "Junk", "Junk-E-Mail", "Trash", "Deleted Items", "Gelöschte Elemente" };
@@ -45,6 +56,13 @@ public sealed class AppConfig
         SourceHost = other.SourceHost;
         SourcePort = other.SourcePort;
         SourceUseSsl = other.SourceUseSsl;
+        SourceKind = other.SourceKind;
+        OnPremEwsUrl = other.OnPremEwsUrl;
+        OnPremPsUri = other.OnPremPsUri;
+        OnPremPsAuth = other.OnPremPsAuth;
+        OnPremAdminUser = other.OnPremAdminUser;
+        OnPremAdminPassword = other.OnPremAdminPassword;
+        OnPremAcceptAnyCert = other.OnPremAcceptAnyCert;
         DryRun = other.DryRun;
         ExcludedFolders = other.ExcludedFolders;
         TargetKind = other.TargetKind;

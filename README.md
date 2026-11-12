@@ -64,6 +64,28 @@ Postfach-Mapping-CSV-Pfad, Ordner-Ausschlüsse, Dry-Run-Flag.
 - **Produktivschlüssel**: im Generator `[1] Schlüsselpaar erzeugen`, `public.pem` in
   `EmbeddedPublicKey.cs` eintragen, `private.pem` geheim halten.
 
+## Quelle: Exchange on-prem (EWS)
+
+Im Reiter „Einrichtung" lässt sich als Quelle statt eines IMAP-Servers ein Exchange on-prem wählen.
+Gelesen wird per EWS mit **einem** Migrationskonto, das die Rolle `ApplicationImpersonation` hat –
+IMAP muss am Exchange nicht aktiv sein, und es werden keine Rechte pro Postfach vergeben.
+
+| Schritt | Was passiert |
+|---|---|
+| A. Voraussetzungen prüfen | Remote-PowerShell erreichbar? Rolle vorhanden? Throttling-Policy? EWS erreichbar und Impersonation wirksam? Zuordnung und Ziel-App vollständig? Listet auf, was fehlt. |
+| B. Postfächer abgleichen | Liest die On-Prem-Postfächer (`Get-Mailbox`) und ordnet sie den Zielpostfächern zu (gleiche Adresse, gleicher Name vor dem @, Alias). |
+| C. Rechte + Throttling setzen | `New-ManagementRoleAssignment … -Role ApplicationImpersonation` und eine EWS-Throttling-Policy ohne Limits für das Migrationskonto. |
+| D. Rechte wieder entfernen | Entfernt genau das, was Schritt C angelegt hat. Bestehende fremde Zuweisungen/Policies bleiben unangetastet. |
+
+Rolle, Throttling und Postfachliste laufen über die Exchange-Remote-PowerShell
+(`http://server/PowerShell/`, Kerberos/Negotiate/Basic), die Daten über EWS
+(`https://server/EWS/Exchange.asmx`, reines SOAP ohne Fremdbibliothek). Die Throttling-Parameter
+gelten für Exchange 2013 und neuer. C und D beachten den Dry-Run-Haken.
+
+Stand: Exchange on-prem ist als **Quelle** in der Oberfläche verdrahtet. `EwsTarget` (on-prem als
+Ziel) und das IMAP-Ziel für beliebige Server liegen im Core, sind in der Oberfläche aber noch nicht
+auswählbar. Kalender und Kontakte folgen separat.
+
 ## Migrationsmodi
 
 - **Testmodus**: kopiert pro Postfach die ersten 10 Mails und bricht ab; keine Lizenz nötig,

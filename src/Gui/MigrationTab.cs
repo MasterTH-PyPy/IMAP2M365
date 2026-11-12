@@ -163,7 +163,10 @@ public sealed class MigrationTab : UserControl
             TestMessageLimit = testMode ? TestMessageLimit : 0,
             Mirror = mirror,
             Debug = _debug.Checked,
-            ExcludedFolders = _config.ExcludedFolders,
+            // Die EWS-Quelle liefert Standardordner mit kanonischen Namen – die gehören mit auf die Ausschlussliste.
+            ExcludedFolders = _config.SourceIsOnPrem
+                ? _config.ExcludedFolders.Concat(OnPremExtraExclusions).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
+                : _config.ExcludedFolders,
             Target = useGraph ? TargetKind.Graph : TargetKind.ImapAppend
         };
 
@@ -263,17 +266,42 @@ public sealed class MigrationTab : UserControl
                 if (!quotaLeft) { jlog($"{row.TargetSmtp}: übersprungen – keine freie Lizenz mehr."); return; }
             }
 
-            var host = (row.SourceHostOverride ?? cfg.SourceHost ?? "").Trim();
-            var port = row.SourcePortOverride ?? cfg.SourcePort;
-            if (string.IsNullOrWhiteSpace(host)) { jlog($"{row.TargetSmtp}: kein Quell-IMAP-Server gesetzt – übersprungen."); return; }
-            if (string.IsNullOrWhiteSpace(row.SourceUser)) { jlog($"{row.TargetSmtp}: kein Quell-User gesetzt – übersprungen."); return; }
+            if (string.IsNullOrWhiteSpace(row.SourceUser)) { jlog($"{row.TargetSmtp}: kein Quell-Postfach/-User gesetzt – übersprungen."); return; }
 
-            await using var source = new ImapSource(host, port, cfg.SourceUseSsl, row.SourceUser, row.SourcePassword);
-            jlog($"Verbinde Quelle {host}:{port} (SSL={cfg.SourceUseSsl}) als {row.SourceUser} …");
+            // Quelle je nach Einstellung: Exchange on-prem (EWS im Namen des Postfachs) oder IMAP-Server.
+            IMailSource source;
+            string sourceName;
+            if (_config.SourceIsOnPrem)
+            {
+                if (string.IsNullOrWhiteSpace(_config.OnPremEwsUrl) || string.IsNullOrWhiteSpace(_config.OnPremAdminUser))
+                {
+                    jlog($"{row.TargetSmtp}: EWS-URL oder Migrationskonto fehlt (Reiter Einrichtung) – übersprungen.");
+                    return;
+                }
+                source = new EwsSource(_config.OnPremEwsUrl, _config.OnPremAdminUser, _config.OnPremAdminPassword,
+                    _config.OnPremAcceptAnyCert, row.SourceUser.Trim());
+                sourceName = $"Exchange on-prem (EWS), Postfach {row.SourceUser.Trim()}";
+            }
+            else
+            {
+                var host = (row.SourceHostOverride ?? cfg.SourceHost ?? "").Trim();
+                var port = row.SourcePortOverride ?? cfg.SourcePort;
+                if (string.IsNullOrWhiteSpace(host)) { jlog($"{row.TargetSmtp}: kein Quell-IMAP-Server gesetzt – übersprungen."); return; }
+                source = new ImapSource(host, port, cfg.SourceUseSsl, row.SourceUser, row.SourcePassword);
+                sourceName = $"{host}:{port} (SSL={cfg.SourceUseSsl}) als {row.SourceUser}";
+            }
+
+            await using var sourceScope = source;
+            jlog($"Verbinde Quelle {sourceName} …");
             try { await source.ConnectAsync(WithTimeout(ct, 30)); }
+            catch (IMAP2M365.Ews.EwsException ex) when (ex.Code == "ErrorImpersonateUserDenied")
+            {
+                jlog($"{row.TargetSmtp}: Zugriff im Namen von {row.SourceUser} verweigert – Rolle ApplicationImpersonation fehlt oder ist noch nicht aktiv (Einrichtung, Schritt C).");
+                return;
+            }
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {
-                jlog($"{row.TargetSmtp}: Quell-IMAP {host}:{port} nicht erreichbar oder Login fehlgeschlagen – {ex.Message}");
+                jlog($"{row.TargetSmtp}: Quelle {sourceName} nicht erreichbar oder Anmeldung fehlgeschlagen – {ex.Message}");
                 return;
             }
 
@@ -359,6 +387,13 @@ public sealed class MigrationTab : UserControl
         finally { _start.Enabled = true; _cancel.Enabled = false; _cts?.Dispose(); _cts = null; }
     }
 
+    // Ordner, die bei einer Exchange-Quelle zusätzlich außen vor bleiben (kanonische Namen + Systemordner).
+    private static readonly string[] OnPremExtraExclusions =
+    {
+        "Junk Email", "Deleted Items", "Outbox", "Postausgang",
+        "Sync Issues", "Synchronisierungsprobleme", "Conversation History", "Aufgezeichnete Unterhaltungen"
+    };
+
     /// <summary>Dauer menschenlesbar (h:mm:ss bzw. m:ss).</summary>
     private static string Duration(TimeSpan t) =>
         t.TotalHours >= 1 ? $"{(int)t.TotalHours}:{t.Minutes:00}:{t.Seconds:00} h" : $"{t.Minutes}:{t.Seconds:00} min";
@@ -386,21 +421,24 @@ public sealed class MigrationTab : UserControl
     /// </summary>
     private static IReadOnlyList<string> MapFolder(IReadOnlyList<string> source)
     {
-        if (source.Count == 1)
+        if (source.Count == 0) return source;
+
+        // Nur der oberste Abschnitt kann ein Standardordner sein; Unterordner behalten ihren Namen
+        // und landen damit unter dem echten Standardordner des Ziels (z. B. Gesendet/2024 -> Sent Items/2024).
+        var first = source[0].ToLowerInvariant() switch
         {
-            var name = source[0];
-            var mapped = name.ToLowerInvariant() switch
-            {
-                "inbox" or "posteingang" => "INBOX",
-                "sent" or "sent items" or "gesendet" or "gesendete elemente" => "Sent Items",
-                "drafts" or "entwürfe" => "Drafts",
-                "deleted items" or "gelöschte elemente" or "papierkorb" => "Deleted Items",
-                "junk" or "junk-e-mail" or "spam" => "Junk Email",
-                _ => name
-            };
-            return new[] { mapped };
-        }
-        return source;
+            "inbox" or "posteingang" => "INBOX",
+            "sent" or "sent items" or "gesendet" or "gesendete elemente" or "gesendete objekte" => "Sent Items",
+            "drafts" or "entwürfe" => "Drafts",
+            "deleted items" or "gelöschte elemente" or "papierkorb" => "Deleted Items",
+            "junk" or "junk-e-mail" or "junk email" or "spam" => "Junk Email",
+            _ => source[0]
+        };
+        if (first == source[0]) return source;
+
+        var mapped = source.ToArray();
+        mapped[0] = first;
+        return mapped;
     }
 
     private void SetState(string text)

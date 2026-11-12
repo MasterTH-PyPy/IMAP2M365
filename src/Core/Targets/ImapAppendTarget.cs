@@ -6,59 +6,110 @@ using MailKit.Security;
 namespace IMAP2M365.Targets;
 
 /// <summary>
-/// Ziel = Exchange Online via IMAP-APPEND mit app-only XOAUTH2.
+/// Ziel = IMAP-Server per APPEND. Zwei Betriebsarten:
+///  - Exchange Online mit app-only XOAUTH2 (Postfach = SASL-Benutzer, Token der App),
+///  - beliebiger IMAP-Server mit Benutzer/Kennwort (für den Weg aus der Cloud zurück).
 /// Überträgt rohes MIME 1:1; Flags und INTERNALDATE (Empfangsdatum) bleiben erhalten.
 /// </summary>
 public sealed class ImapAppendTarget : IMailTarget
 {
-    private const string Host = "outlook.office365.com";
-    private const int Port = 993;
+    public const string ExchangeOnlineHost = "outlook.office365.com";
 
-    private readonly ITokenProvider _tokens;
+    private readonly ITokenProvider? _tokens;
+    private readonly string _host;
+    private readonly int _port;
+    private readonly bool _useSsl;
+    private readonly string _password = "";
     private readonly ImapClient _client = new();
     private string _mailbox = "";
 
-    public ImapAppendTarget(ITokenProvider tokens) => _tokens = tokens;
+    /// <summary>Exchange Online, app-only XOAUTH2.</summary>
+    public ImapAppendTarget(ITokenProvider tokens)
+    {
+        _tokens = tokens;
+        _host = ExchangeOnlineHost;
+        _port = 993;
+        _useSsl = true;
+    }
+
+    /// <summary>Beliebiger IMAP-Server mit Benutzer/Kennwort (Benutzer = Zielpostfach aus ConnectAsync).</summary>
+    public ImapAppendTarget(string host, int port, bool useSsl, string password, bool acceptAnyCertificate = false)
+    {
+        _host = host;
+        _port = port;
+        _useSsl = useSsl;
+        _password = password;
+        if (acceptAnyCertificate)
+            _client.ServerCertificateValidationCallback = (_, _, _, _) => true;
+    }
 
     public async Task ConnectAsync(string targetMailbox, CancellationToken ct)
     {
         _mailbox = targetMailbox;
-        await _client.ConnectAsync(Host, Port, SecureSocketOptions.SslOnConnect, ct)
-            .ConfigureAwait(false);
+        var opt = _useSsl ? SecureSocketOptions.SslOnConnect : SecureSocketOptions.StartTlsWhenAvailable;
+        await _client.ConnectAsync(_host, _port, opt, ct).ConfigureAwait(false);
 
-        var token = await _tokens.GetTokenAsync(ExchangeOnlineTokenProvider.ExchangeImapScope, ct)
-            .ConfigureAwait(false);
-
-        // app-only: UPN des Zielpostfachs + App-Token. Erfordert vorab registrierten
-        // ServicePrincipal + Mailbox-Permission in Exchange (siehe prep/-Skript).
-        var sasl = new SaslMechanismOAuth2(targetMailbox, token);
-        await _client.AuthenticateAsync(sasl, ct).ConfigureAwait(false);
+        if (_tokens is not null)
+        {
+            // app-only: UPN des Zielpostfachs + App-Token. Erfordert vorab registrierten
+            // ServicePrincipal + Mailbox-Permission in Exchange.
+            var token = await _tokens.GetTokenAsync(ExchangeOnlineTokenProvider.ExchangeImapScope, ct)
+                .ConfigureAwait(false);
+            await _client.AuthenticateAsync(new SaslMechanismOAuth2(targetMailbox, token), ct).ConfigureAwait(false);
+        }
+        else
+        {
+            await _client.AuthenticateAsync(targetMailbox, _password, ct).ConfigureAwait(false);
+        }
     }
 
     public async Task<string> EnsureFolderAsync(IReadOnlyList<string> pathSegments, CancellationToken ct)
     {
-        var personal = _client.GetFolder(_client.PersonalNamespaces[0]);
-        IMailFolder current = _client.Inbox; // Startpunkt für Root-nahe Pfade
+        IMailFolder current = _client.GetFolder(_client.PersonalNamespaces[0]);
+        var start = 0;
 
-        // Sonderfall: "INBOX" direkt
-        if (pathSegments.Count == 1 && pathSegments[0].Equals("INBOX", StringComparison.OrdinalIgnoreCase))
-            return _client.Inbox.FullName;
+        // Kanonischer erster Abschnitt (INBOX, Sent Items …) -> echter Standardordner des Servers,
+        // unabhängig von dessen Sprache/Benennung (SPECIAL-USE). Sonst normal per Name.
+        if (pathSegments.Count > 0 && ResolveSpecial(pathSegments[0]) is { } special)
+        {
+            current = special;
+            start = 1;
+        }
 
-        current = personal;
-        foreach (var segment in pathSegments)
+        for (var i = start; i < pathSegments.Count; i++)
         {
             IMailFolder child;
             try
             {
-                child = await current.GetSubfolderAsync(segment, ct).ConfigureAwait(false);
+                child = await current.GetSubfolderAsync(pathSegments[i], ct).ConfigureAwait(false);
             }
             catch (FolderNotFoundException)
             {
-                child = await current.CreateAsync(segment, isMessageFolder: true, ct).ConfigureAwait(false);
+                child = await current.CreateAsync(pathSegments[i], isMessageFolder: true, ct).ConfigureAwait(false);
             }
             current = child;
         }
         return current.FullName;
+    }
+
+    private IMailFolder? ResolveSpecial(string canonical)
+    {
+        if (canonical.Equals("INBOX", StringComparison.OrdinalIgnoreCase)) return _client.Inbox;
+
+        SpecialFolder? kind = canonical.ToLowerInvariant() switch
+        {
+            "sent items" => SpecialFolder.Sent,
+            "drafts" => SpecialFolder.Drafts,
+            "deleted items" => SpecialFolder.Trash,
+            "junk email" => SpecialFolder.Junk,
+            "archive" => SpecialFolder.Archive,
+            _ => null
+        };
+        if (kind is null) return null;
+
+        // Server ohne SPECIAL-USE/XLIST: kein Standardordner bekannt -> Aufrufer legt per Name an.
+        try { return _client.GetFolder(kind.Value); }
+        catch { return null; }
     }
 
     public async Task<bool> ExistsAsync(string folderHandle, string messageId, CancellationToken ct)
